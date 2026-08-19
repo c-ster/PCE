@@ -18,12 +18,17 @@ Foundational build-out, tracking [PRD v0.1](docs/ARCHITECTURE.md). Current slice
 
 - `SourceDocument` canonical model with epistemic roles and sensitivity levels
 - SQLite persistence with an explicit migration runner
-- A local file adapter (Markdown/text) enforcing approved source roots
+- A local file adapter and a git adapter (Markdown/text), both enforcing
+  approved source roots
+- A CLI skeleton (`pce init` / `source` / `repo` / `sync` / `compartment` /
+  `doctor`) wired to everything above; commands for subsystems that don't
+  exist yet say so explicitly instead of pretending to work
 
 Not yet implemented: retrieval, context router, context steward, memory
-governance, MCP server, CLI. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-for the full design and [docs/PRIVACY.md](docs/PRIVACY.md) /
-[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for the security posture.
+governance, policy enforcement, MCP server. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design and
+[docs/PRIVACY.md](docs/PRIVACY.md) / [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
+for the security posture.
 
 ## Install (development)
 
@@ -34,6 +39,20 @@ pip install -e ".[dev]"
 ```
 
 ## Try it
+
+```bash
+pce init --compartment PERSONAL
+pce source add examples/synthetic_profile
+pce repo add .
+pce source list
+pce doctor
+```
+
+`pce --help` lists every command. `PCE_HOME` overrides the capsule location
+(defaults to `~/.pce`) — handy for trying PCE without touching your real
+capsule.
+
+Or use the library directly:
 
 ```python
 from pathlib import Path

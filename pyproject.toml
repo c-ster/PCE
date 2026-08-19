@@ -8,10 +8,14 @@ requires-python = ">=3.12"
 authors = [{ name = "PCE Contributors" }]
 dependencies = [
     "pydantic>=2.6",
+    "click>=8.1",
 ]
 
 [project.urls]
 Repository = "https://github.com/c-ster/PCE"
+
+[project.scripts]
+pce = "pce.cli.main:cli"
 
 [project.optional-dependencies]
 dev = [
