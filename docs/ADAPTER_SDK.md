@@ -24,7 +24,12 @@ Adapters must declare:
 
 - **Local file** (`pce.adapters.local_file.LocalFileAdapter`) — Markdown/text
   files under explicitly approved root directories. Fully offline. Read-only.
-- **Git** — planned; not yet implemented in this slice.
+- **Git** (`pce.adapters.git.GitAdapter`) — Markdown/text files tracked in a
+  local git working tree. Reads committed content at `HEAD` via `git show`
+  (not uncommitted edits), so `content_hash` and `source_version` reflect an
+  actual commit; `.gitignore` is respected because only tracked files are
+  considered. Fully offline — it operates on an already-cloned repository and
+  never fetches from a remote itself. Read-only.
 
 ## Local file safety
 

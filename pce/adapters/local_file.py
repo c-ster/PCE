@@ -14,9 +14,8 @@ from pathlib import Path
 
 from pce.adapters.base import SourceAdapter
 from pce.adapters.errors import SourceRootViolation
+from pce.adapters.text_utils import SUPPORTED_EXTENSIONS, extract_title, source_type_for_suffix
 from pce.context.models import SourceDocument
-
-_SUPPORTED_EXTENSIONS = {".md": "markdown", ".markdown": "markdown", ".txt": "text"}
 
 PARSER_VERSION = "local_file_text_v1"
 CHUNKING_VERSION = "none_v1"
@@ -42,7 +41,7 @@ class LocalFileAdapter(SourceAdapter):
     def discover(self) -> list[str]:
         refs = []
         for root in self._approved_roots:
-            for ext in _SUPPORTED_EXTENSIONS:
+            for ext in SUPPORTED_EXTENSIONS:
                 refs.extend(str(p) for p in root.rglob(f"*{ext}") if p.is_file())
         return sorted(refs)
 
@@ -58,10 +57,10 @@ class LocalFileAdapter(SourceAdapter):
         content = path.read_text(encoding="utf-8")
         stat = path.stat()
         return {
-            "title": _extract_title(content, fallback=path.stem),
+            "title": extract_title(content, fallback=path.stem),
             "created_at_source": datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc),
             "updated_at_source": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
-            "source_type": _SUPPORTED_EXTENSIONS.get(path.suffix.lower(), "text"),
+            "source_type": source_type_for_suffix(path.suffix),
         }
 
     def sync(self) -> Iterator[SourceDocument]:
@@ -79,12 +78,3 @@ class LocalFileAdapter(SourceAdapter):
                 parser_version=PARSER_VERSION,
                 chunking_version=CHUNKING_VERSION,
             )
-
-
-def _extract_title(content: str, fallback: str) -> str:
-    for line in content.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        return stripped.lstrip("#").strip() if stripped.startswith("#") else fallback
-    return fallback
