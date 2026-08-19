@@ -1,0 +1,30 @@
+[project]
+name = "personal-context-engine"
+version = "0.1.0"
+description = "Local-first personal context and memory layer for personal AI."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+authors = [{ name = "PCE Contributors" }]
+dependencies = [
+    "pydantic>=2.6",
+]
+
+[project.urls]
+Repository = "https://github.com/c-ster/PCE"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pce*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
