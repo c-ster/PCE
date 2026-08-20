@@ -147,8 +147,6 @@ def test_compartment_add_and_list(runner: CliRunner, capsule_env: dict):
 @pytest.mark.parametrize(
     "args",
     [
-        ["index"],
-        ["search", "anything"],
         ["memory", "list"],
         ["context", "inbox"],
         ["context", "review"],
@@ -158,6 +156,40 @@ def test_compartment_add_and_list(runner: CliRunner, capsule_env: dict):
     ],
 )
 def test_unimplemented_commands_fail_honestly(runner: CliRunner, capsule_env: dict, args: list):
+    runner.invoke(cli, ["init"], env=capsule_env)
     result = runner.invoke(cli, args, env=capsule_env)
     assert result.exit_code == 1
     assert "not implemented yet" in result.output
+
+
+def test_search_without_index_errors(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    result = runner.invoke(cli, ["search", "anything"], env=capsule_env)
+    assert result.exit_code != 0
+    assert "pce index" in result.output
+
+
+def test_index_and_search_end_to_end(runner: CliRunner, capsule_env: dict, tmp_path: Path):
+    runner.invoke(cli, ["init"], env=capsule_env)
+
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "pricing.md").write_text(
+        "# Nightingale Pricing\n\nThe approved price for the Nightingale project is five thousand dollars.\n"
+    )
+    (docs_dir / "unrelated.md").write_text("# Recipe\n\nHow to bake sourdough bread at home.\n")
+
+    runner.invoke(cli, ["source", "add", str(docs_dir)], env=capsule_env)
+
+    index_result = runner.invoke(cli, ["index"], env=capsule_env)
+    assert index_result.exit_code == 0, index_result.output
+    assert "Indexed 2 document(s)" in index_result.output
+
+    # Re-indexing with unchanged content should skip both documents.
+    reindex_result = runner.invoke(cli, ["index"], env=capsule_env)
+    assert "Skipped 2 document(s)" in reindex_result.output
+
+    search_result = runner.invoke(cli, ["search", "Nightingale pricing"], env=capsule_env)
+    assert search_result.exit_code == 0, search_result.output
+    assert "Nightingale Pricing" in search_result.output
+    assert "not policy-filtered" in search_result.output

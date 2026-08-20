@@ -17,6 +17,17 @@ Initial focus is local OpenAI-compatible endpoints (e.g. served by Jan, Open
 WebUI, LM Studio, or a bare llama.cpp/vLLM server) plus simple provider
 adapters where a service does not speak that protocol.
 
+## Current default: HashingEmbeddingProvider (placeholder)
+
+`pce.providers.hashing_embeddings.HashingEmbeddingProvider` is the only
+`EmbeddingProvider` this build ships. It hashes tokens into a fixed-size
+bag-of-words vector — deterministic, zero ML dependencies, fully offline —
+so retrieval works out of the box. It is **not** a quality embedding model:
+it captures shared vocabulary, not meaning. Swapping in a real local model
+(e.g. an OpenAI-compatible `/v1/embeddings` endpoint) means implementing
+`EmbeddingProvider` and re-running `pce index` — no other retrieval code
+changes, by design (see "Model independence" below).
+
 ## Index generations
 
 Every index records the embedding model, embedding version, dimensions,

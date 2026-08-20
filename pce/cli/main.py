@@ -25,10 +25,19 @@ from pce.cli.home import (
     is_initialized,
     require_initialized,
 )
+from pce.context.chunks import ChunkRepository
 from pce.context.db import MIGRATIONS_DIR, connect
 from pce.context.registry import SourceRegistry
 from pce.context.repository import SourceDocumentRepository
 from pce.policy.compartments import CompartmentRegistry
+from pce.providers.hashing_embeddings import HashingEmbeddingProvider
+from pce.retrieval.indexer import build_index
+from pce.retrieval.search import hybrid_search
+
+# The only EmbeddingProvider this build ships. Query-time embedding must use
+# the same provider that built the index, or similarity scores are
+# meaningless — see docs/MODEL_PROVIDERS.md.
+_EMBEDDING_PROVIDER = HashingEmbeddingProvider()
 
 
 def _open_capsule():
@@ -89,10 +98,13 @@ def init(compartments: tuple[str, ...]) -> None:
     click.echo("  pce source add <path>       approve a folder of Markdown/text files")
     click.echo("  pce repo add <path>         approve a local git working tree")
     click.echo("  pce compartment add <name>  define a compartment")
+    click.echo("  pce index                   build the retrieval index")
+    click.echo("  pce search \"...\"            search indexed context")
     click.echo("  pce doctor                  check the installation")
     click.echo()
     click.secho(
-        "Not yet implemented in this build: embedding model selection, local "
+        "Not yet implemented in this build: a real local embedding model "
+        "(retrieval uses a placeholder hashing embedding for now), local "
         "LLM configuration, and MCP connection instructions. See README.md "
         "'Status'.",
         fg="yellow",
@@ -270,15 +282,48 @@ def sync() -> None:
 
 @cli.command()
 def index() -> None:
-    """Build the local retrieval index (lexical + semantic)."""
-    _not_yet_implemented("pce index", "docs/ARCHITECTURE.md#retrieval")
+    """Build the local retrieval index (lexical FTS5 + embeddings) for every registered source."""
+    _, conn = _open_capsule()
+    stats = build_index(conn, _EMBEDDING_PROVIDER)
+
+    click.echo(f"Indexed {stats.documents_processed} document(s), {stats.chunks_created} chunk(s) created.")
+    click.echo(f"Skipped {stats.documents_skipped} document(s) already up to date.")
+    if stats.documents_failed:
+        click.secho(f"Failed to read {stats.documents_failed} document(s):", fg="red")
+        for failure in stats.failures:
+            click.echo(f"  - {failure}")
 
 
 @cli.command()
 @click.argument("query")
-def search(query: str) -> None:
-    """Search indexed context."""
-    _not_yet_implemented("pce search", "docs/ARCHITECTURE.md#retrieval")
+@click.option("--limit", default=10, show_default=True, help="Maximum results to show.")
+def search(query: str, limit: int) -> None:
+    """Search indexed context (hybrid lexical + semantic, fused with RRF)."""
+    _, conn = _open_capsule()
+    chunk_repo = ChunkRepository(conn)
+
+    if chunk_repo.count() == 0:
+        raise click.ClickException("No index found. Run `pce index` first.")
+
+    click.secho(
+        "This build does not yet enforce compartments or sensitivity — "
+        "results are not policy-filtered. See docs/THREAT_MODEL.md.",
+        fg="yellow",
+        err=True,
+    )
+
+    results = hybrid_search(conn, query, _EMBEDDING_PROVIDER, limit=limit)
+    if not results:
+        click.echo("No matches.")
+        return
+
+    for rank, result in enumerate(results, start=1):
+        doc = result.document
+        snippet = result.text[:200].replace("\n", " ")
+        click.echo(f"{rank}. [{result.score:.4f}] {doc.title or doc.source_ref}  ({doc.epistemic_role}, {doc.sensitivity})")
+        click.echo(f"   source: {doc.source_ref}")
+        click.echo(f"   {snippet}{'...' if len(result.text) > 200 else ''}")
+        click.echo()
 
 
 @cli.group()
@@ -388,6 +433,9 @@ def doctor() -> None:
         registry = SourceRegistry(conn)
         checks.append(("registered sources", True, f"{len(registry.list())} registered"))
 
+        chunk_repo = ChunkRepository(conn)
+        checks.append(("retrieval index", True, f"{chunk_repo.count()} chunk(s) indexed (run `pce index` to build/refresh)"))
+
     all_ok = True
     for label, ok, detail in checks:
         symbol = "OK  " if ok else "WARN"
@@ -396,9 +444,9 @@ def doctor() -> None:
 
     click.echo()
     click.secho(
-        "Not yet implemented in this build: embedding/LLM providers, "
-        "retrieval, memory, context steward, policy enforcement, and the "
-        "MCP server.",
+        "Not yet implemented in this build: real embedding/LLM providers "
+        "(retrieval uses a placeholder hashing embedding), memory, context "
+        "steward, policy enforcement, and the MCP server.",
         fg="yellow",
     )
 

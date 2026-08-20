@@ -20,15 +20,24 @@ Foundational build-out, tracking [PRD v0.1](docs/ARCHITECTURE.md). Current slice
 - SQLite persistence with an explicit migration runner
 - A local file adapter and a git adapter (Markdown/text), both enforcing
   approved source roots
-- A CLI skeleton (`pce init` / `source` / `repo` / `sync` / `compartment` /
-  `doctor`) wired to everything above; commands for subsystems that don't
-  exist yet say so explicitly instead of pretending to work
+- A CLI (`pce init` / `source` / `repo` / `sync` / `compartment` / `index` /
+  `search` / `doctor`) wired to everything below; commands for subsystems
+  that don't exist yet say so explicitly instead of pretending to work
+- Hybrid retrieval: SQLite FTS5 (lexical) + a placeholder embedding provider
+  (semantic), fused with reciprocal rank fusion. **Not policy-filtered yet —
+  see the caveat below.**
 
-Not yet implemented: retrieval, context router, context steward, memory
-governance, policy enforcement, MCP server. See
+Not yet implemented: a real local embedding model, context router, context
+steward, memory governance, policy/compartment **enforcement** (compartments
+can be defined but nothing restricts search by them yet), MCP server. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design and
 [docs/PRIVACY.md](docs/PRIVACY.md) / [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
 for the security posture.
+
+> **Caveat:** `pce search` does not yet enforce sensitivity or compartment
+> scope (section 29, "policy before ranking"). It will surface anything
+> that's been indexed, regardless of how sensitive it's marked. Don't treat
+> it as access-controlled until the policy layer lands.
 
 ## Install (development)
 
@@ -45,6 +54,8 @@ pce init --compartment PERSONAL
 pce source add examples/synthetic_profile
 pce repo add .
 pce source list
+pce index
+pce search "concise technical explanations preference"
 pce doctor
 ```
 
