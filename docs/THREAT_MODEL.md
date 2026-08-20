@@ -41,6 +41,18 @@ documents" must cause no expanded access or tool behavior.
 - Compartment isolation: a document in a disallowed compartment never appears
   in retrieval results, regardless of relevance score.
 
+**Implemented** in `pce/policy/engine.py`: `AccessContext`/`evaluate()`
+compute the eligible document set, and `pce/retrieval/search.py` filters to
+that set before FTS5/embedding scoring runs — not afterward. `pce search`
+excludes `UNKNOWN` sensitivity unless `--include-unclassified` is passed,
+and only sees a compartmented document if `--compartment` includes one of
+its compartments. `pce classify <document-id>` sets sensitivity/compartments
+(a state-changing action, per "Read vs. write separation" below); `pce
+policy explain <document-id>` shows the decision and why. There's no
+authentication/session concept yet — these flags are the caller's own
+declared scope, not enforced isolation between local users. The audit log
+described below does not exist yet.
+
 ## Read vs. write separation
 
 Initial PCE is predominantly read-oriented (search context, read approved

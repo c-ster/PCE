@@ -20,24 +20,28 @@ Foundational build-out, tracking [PRD v0.1](docs/ARCHITECTURE.md). Current slice
 - SQLite persistence with an explicit migration runner
 - A local file adapter and a git adapter (Markdown/text), both enforcing
   approved source roots
-- A CLI (`pce init` / `source` / `repo` / `sync` / `compartment` / `index` /
-  `search` / `doctor`) wired to everything below; commands for subsystems
-  that don't exist yet say so explicitly instead of pretending to work
+- A CLI (`pce init` / `source` / `repo` / `sync` / `classify` / `compartment` /
+  `index` / `search` / `policy explain` / `doctor`) wired to everything below;
+  commands for subsystems that don't exist yet say so explicitly instead of
+  pretending to work
 - Hybrid retrieval: SQLite FTS5 (lexical) + a placeholder embedding provider
-  (semantic), fused with reciprocal rank fusion. **Not policy-filtered yet —
-  see the caveat below.**
+  (semantic), fused with reciprocal rank fusion
+- A deterministic policy engine enforced *before* ranking, not filtered out
+  of results afterward: `UNKNOWN` sensitivity is excluded from search by
+  default (fails closed), and a document scoped to a compartment the caller
+  wasn't granted never surfaces, however relevant
 
 Not yet implemented: a real local embedding model, context router, context
-steward, memory governance, policy/compartment **enforcement** (compartments
-can be defined but nothing restricts search by them yet), MCP server. See
+steward, memory governance, MCP server. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design and
 [docs/PRIVACY.md](docs/PRIVACY.md) / [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
 for the security posture.
 
-> **Caveat:** `pce search` does not yet enforce sensitivity or compartment
-> scope (section 29, "policy before ranking"). It will surface anything
-> that's been indexed, regardless of how sensitive it's marked. Don't treat
-> it as access-controlled until the policy layer lands.
+> **Caveat:** there's no authentication/session concept yet — `pce search`'s
+> `--compartment`/`--include-unclassified` flags are how *you* narrow what a
+> given search call can see, not a barrier against another local user. The
+> policy engine (`pce/policy/engine.py`) is what the future MCP server will
+> use to scope what a model is allowed to retrieve.
 
 ## Install (development)
 
@@ -55,9 +59,15 @@ pce source add examples/synthetic_profile
 pce repo add .
 pce source list
 pce index
-pce search "concise technical explanations preference"
+pce search "concise technical explanations preference" --include-unclassified
+pce classify <document-id> --sensitivity public --compartment PERSONAL
+pce policy explain <document-id> --compartment PERSONAL
 pce doctor
 ```
+
+Newly ingested documents default to `sensitivity: unknown`, which `pce
+search` excludes by default (PRD section 27: unknown fails closed) — pass
+`--include-unclassified` to see them, or `pce classify` them first.
 
 `pce --help` lists every command. `PCE_HOME` overrides the capsule location
 (defaults to `~/.pce`) — handy for trying PCE without touching your real

@@ -151,7 +151,6 @@ def test_compartment_add_and_list(runner: CliRunner, capsule_env: dict):
         ["context", "inbox"],
         ["context", "review"],
         ["context", "stats"],
-        ["policy", "explain"],
         ["serve-mcp"],
     ],
 )
@@ -189,7 +188,103 @@ def test_index_and_search_end_to_end(runner: CliRunner, capsule_env: dict, tmp_p
     reindex_result = runner.invoke(cli, ["index"], env=capsule_env)
     assert "Skipped 2 document(s)" in reindex_result.output
 
-    search_result = runner.invoke(cli, ["search", "Nightingale pricing"], env=capsule_env)
+    # Unclassified sources are excluded by default (fail closed).
+    default_scope_result = runner.invoke(cli, ["search", "Nightingale pricing"], env=capsule_env)
+    assert default_scope_result.exit_code == 0, default_scope_result.output
+    assert "No matches" in default_scope_result.output
+
+    search_result = runner.invoke(
+        cli, ["search", "Nightingale pricing", "--include-unclassified"], env=capsule_env
+    )
     assert search_result.exit_code == 0, search_result.output
     assert "Nightingale Pricing" in search_result.output
-    assert "not policy-filtered" in search_result.output
+
+
+def _get_document_id(runner: CliRunner, capsule_env: dict, source_id: str) -> str:
+    inspect_result = runner.invoke(cli, ["source", "inspect", source_id], env=capsule_env)
+    for line in inspect_result.output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            return stripped.split()[1]
+    raise AssertionError(f"no document line found in: {inspect_result.output}")
+
+
+def test_classify_sets_sensitivity_and_compartment(runner: CliRunner, capsule_env: dict, tmp_path: Path):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    runner.invoke(cli, ["compartment", "add", "LEGAL"], env=capsule_env)
+
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.md").write_text("# A\n\nBody.\n")
+    add_result = runner.invoke(cli, ["source", "add", str(docs_dir)], env=capsule_env)
+    source_id = add_result.output.splitlines()[0].split()[2]
+    document_id = _get_document_id(runner, capsule_env, source_id)
+
+    classify_result = runner.invoke(
+        cli,
+        ["classify", document_id, "--sensitivity", "public", "--compartment", "LEGAL"],
+        env=capsule_env,
+    )
+    assert classify_result.exit_code == 0, classify_result.output
+    assert "sensitivity=public" in classify_result.output
+    assert "LEGAL" in classify_result.output
+
+
+def test_classify_rejects_unregistered_compartment(runner: CliRunner, capsule_env: dict, tmp_path: Path):
+    runner.invoke(cli, ["init"], env=capsule_env)
+
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.md").write_text("# A\n\nBody.\n")
+    add_result = runner.invoke(cli, ["source", "add", str(docs_dir)], env=capsule_env)
+    source_id = add_result.output.splitlines()[0].split()[2]
+    document_id = _get_document_id(runner, capsule_env, source_id)
+
+    result = runner.invoke(cli, ["classify", document_id, "--compartment", "NEVER_DEFINED"], env=capsule_env)
+    assert result.exit_code != 0
+    assert "pce compartment add" in result.output
+
+
+def test_classify_with_no_options_errors(runner: CliRunner, capsule_env: dict, tmp_path: Path):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.md").write_text("# A\n\nBody.\n")
+    add_result = runner.invoke(cli, ["source", "add", str(docs_dir)], env=capsule_env)
+    source_id = add_result.output.splitlines()[0].split()[2]
+    document_id = _get_document_id(runner, capsule_env, source_id)
+
+    result = runner.invoke(cli, ["classify", document_id], env=capsule_env)
+    assert result.exit_code != 0
+
+
+def test_policy_explain_denies_unclassified_document_by_default(
+    runner: CliRunner, capsule_env: dict, tmp_path: Path
+):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.md").write_text("# A\n\nBody.\n")
+    add_result = runner.invoke(cli, ["source", "add", str(docs_dir)], env=capsule_env)
+    source_id = add_result.output.splitlines()[0].split()[2]
+    document_id = _get_document_id(runner, capsule_env, source_id)
+
+    result = runner.invoke(cli, ["policy", "explain", document_id], env=capsule_env)
+    assert result.exit_code == 1
+    assert "DENIED" in result.output
+    assert "UNKNOWN" in result.output
+
+
+def test_policy_explain_allows_after_classification(runner: CliRunner, capsule_env: dict, tmp_path: Path):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.md").write_text("# A\n\nBody.\n")
+    add_result = runner.invoke(cli, ["source", "add", str(docs_dir)], env=capsule_env)
+    source_id = add_result.output.splitlines()[0].split()[2]
+    document_id = _get_document_id(runner, capsule_env, source_id)
+
+    runner.invoke(cli, ["classify", document_id, "--sensitivity", "public"], env=capsule_env)
+    result = runner.invoke(cli, ["policy", "explain", document_id], env=capsule_env)
+    assert result.exit_code == 0
+    assert "ALLOWED" in result.output

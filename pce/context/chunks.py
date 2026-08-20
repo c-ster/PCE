@@ -111,29 +111,69 @@ class ChunkRepository:
         ).fetchall()
         return [_row_to_chunk(row) for row in rows]
 
-    def all_embedded(self) -> list[ContextChunk]:
-        rows = self._conn.execute("SELECT * FROM context_chunks WHERE embedding IS NOT NULL").fetchall()
+    def all_embedded(self, eligible_document_ids: set[str] | None = None) -> list[ContextChunk]:
+        """eligible_document_ids restricts the scan to those documents
+        *before* any similarity scoring happens (policy before ranking,
+        section 29). None means unrestricted; an empty set short-circuits."""
+        if eligible_document_ids is not None and not eligible_document_ids:
+            return []
+
+        if eligible_document_ids is None:
+            rows = self._conn.execute("SELECT * FROM context_chunks WHERE embedding IS NOT NULL").fetchall()
+        else:
+            placeholders = ", ".join("?" for _ in eligible_document_ids)
+            rows = self._conn.execute(
+                f"""
+                SELECT * FROM context_chunks
+                WHERE embedding IS NOT NULL AND document_id IN ({placeholders})
+                """,
+                tuple(eligible_document_ids),
+            ).fetchall()
         return [_row_to_chunk(row) for row in rows]
 
-    def lexical_search(self, query: str, limit: int) -> list[tuple[str, float]]:
+    def lexical_search(
+        self, query: str, limit: int, eligible_document_ids: set[str] | None = None
+    ) -> list[tuple[str, float]]:
         """Return (chunk_id, bm25_score) pairs, best match first. FTS5's
         bm25() is negative-is-better, so we negate it into ascending "higher
-        is better" like everything else in this module."""
+        is better" like everything else in this module.
+
+        eligible_document_ids restricts candidates *before* FTS5 scoring
+        (policy before ranking, section 29). None means unrestricted; an
+        empty set short-circuits without querying at all.
+        """
+        if eligible_document_ids is not None and not eligible_document_ids:
+            return []
+
         match_query = _fts_match_query(query)
         if match_query is None:
             return []
 
-        rows = self._conn.execute(
-            """
-            SELECT c.id AS id, bm25(context_chunks_fts) AS rank
-            FROM context_chunks_fts
-            JOIN context_chunks c ON c.rowid = context_chunks_fts.rowid
-            WHERE context_chunks_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (match_query, limit),
-        ).fetchall()
+        if eligible_document_ids is None:
+            rows = self._conn.execute(
+                """
+                SELECT c.id AS id, bm25(context_chunks_fts) AS rank
+                FROM context_chunks_fts
+                JOIN context_chunks c ON c.rowid = context_chunks_fts.rowid
+                WHERE context_chunks_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (match_query, limit),
+            ).fetchall()
+        else:
+            placeholders = ", ".join("?" for _ in eligible_document_ids)
+            rows = self._conn.execute(
+                f"""
+                SELECT c.id AS id, bm25(context_chunks_fts) AS rank
+                FROM context_chunks_fts
+                JOIN context_chunks c ON c.rowid = context_chunks_fts.rowid
+                WHERE context_chunks_fts MATCH ? AND c.document_id IN ({placeholders})
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (match_query, *eligible_document_ids, limit),
+            ).fetchall()
         return [(row["id"], -row["rank"]) for row in rows]
 
     def count(self) -> int:

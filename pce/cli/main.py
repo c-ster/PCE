@@ -27,9 +27,11 @@ from pce.cli.home import (
 )
 from pce.context.chunks import ChunkRepository
 from pce.context.db import MIGRATIONS_DIR, connect
+from pce.context.models import Sensitivity
 from pce.context.registry import SourceRegistry
 from pce.context.repository import SourceDocumentRepository
 from pce.policy.compartments import CompartmentRegistry
+from pce.policy.engine import AccessContext, evaluate
 from pce.providers.hashing_embeddings import HashingEmbeddingProvider
 from pce.retrieval.indexer import build_index
 from pce.retrieval.search import hybrid_search
@@ -202,6 +204,49 @@ def source_remove(source_id: str) -> None:
     click.echo(f"Removed source {source_id} and {len(doc_ids)} document(s).")
 
 
+@cli.command()
+@click.argument("document_id")
+@click.option(
+    "--sensitivity", type=click.Choice([s.value for s in Sensitivity]), help="Set the document's sensitivity level."
+)
+@click.option(
+    "--compartment",
+    "compartments",
+    multiple=True,
+    help="Set the document's compartments (replaces any existing ones; repeatable).",
+)
+def classify(document_id: str, sensitivity: str | None, compartments: tuple[str, ...]) -> None:
+    """Change a document's sensitivity and/or compartments (PRD section 31: a
+    state-changing action, done only on explicit request — never inferred)."""
+    _, conn = _open_capsule()
+    doc_repo = SourceDocumentRepository(conn)
+
+    document = doc_repo.get(document_id)
+    if not document:
+        raise click.ClickException(f"No document with id {document_id}")
+
+    if not sensitivity and not compartments:
+        raise click.ClickException("Nothing to update — pass --sensitivity and/or --compartment.")
+
+    if compartments:
+        known = set(CompartmentRegistry(conn).list())
+        unknown = [c for c in compartments if c not in known]
+        if unknown:
+            raise click.ClickException(
+                f"Unknown compartment(s) {unknown}. Define them first with `pce compartment add <name>`."
+            )
+
+    updates: dict = {}
+    if sensitivity:
+        updates["sensitivity"] = Sensitivity(sensitivity)
+    if compartments:
+        updates["compartments"] = list(compartments)
+
+    updated = document.model_copy(update=updates)
+    doc_repo.upsert(updated)
+    click.echo(f"Updated {document_id}: sensitivity={updated.sensitivity}, compartments={updated.compartments}")
+
+
 @cli.group()
 def repo() -> None:
     """Manage git repository sources."""
@@ -297,22 +342,37 @@ def index() -> None:
 @cli.command()
 @click.argument("query")
 @click.option("--limit", default=10, show_default=True, help="Maximum results to show.")
-def search(query: str, limit: int) -> None:
-    """Search indexed context (hybrid lexical + semantic, fused with RRF)."""
+@click.option(
+    "--compartment",
+    "compartments",
+    multiple=True,
+    help="Restrict results to these compartments (repeatable). Omit for no compartment restriction.",
+)
+@click.option(
+    "--include-unclassified",
+    is_flag=True,
+    default=False,
+    help="Also include documents with UNKNOWN sensitivity (excluded by default — section 27 fails closed).",
+)
+def search(query: str, limit: int, compartments: tuple[str, ...], include_unclassified: bool) -> None:
+    """Search indexed context (hybrid lexical + semantic, fused with RRF), policy-filtered before ranking."""
     _, conn = _open_capsule()
     chunk_repo = ChunkRepository(conn)
 
     if chunk_repo.count() == 0:
         raise click.ClickException("No index found. Run `pce index` first.")
 
-    click.secho(
-        "This build does not yet enforce compartments or sensitivity — "
-        "results are not policy-filtered. See docs/THREAT_MODEL.md.",
-        fg="yellow",
-        err=True,
+    access_context = AccessContext(
+        allowed_compartments=frozenset(compartments) if compartments else None,
+        allow_unclassified=include_unclassified,
     )
+    scope_desc = (
+        f"compartments={sorted(compartments) if compartments else 'unrestricted'}, "
+        f"unclassified sources {'included' if include_unclassified else 'excluded'}"
+    )
+    click.secho(f"Scope: {scope_desc}", fg="cyan", err=True)
 
-    results = hybrid_search(conn, query, _EMBEDDING_PROVIDER, limit=limit)
+    results = hybrid_search(conn, query, _EMBEDDING_PROVIDER, access_context, limit=limit)
     if not results:
         click.echo("No matches.")
         return
@@ -392,9 +452,50 @@ def policy() -> None:
 
 
 @policy.command("explain")
-@click.argument("scenario", required=False)
-def policy_explain(scenario: str | None) -> None:
-    _not_yet_implemented("pce policy explain", "docs/THREAT_MODEL.md")
+@click.argument("document_id")
+@click.option(
+    "--compartment",
+    "compartments",
+    multiple=True,
+    help="Compartment scope to evaluate against (repeatable). Omit for no compartment restriction.",
+)
+@click.option(
+    "--include-unclassified",
+    is_flag=True,
+    default=False,
+    help="Evaluate as if UNKNOWN-sensitivity sources were allowed.",
+)
+def policy_explain(document_id: str, compartments: tuple[str, ...], include_unclassified: bool) -> None:
+    """Explain whether DOCUMENT_ID would be visible under a given access scope, and why."""
+    _, conn = _open_capsule()
+    document = SourceDocumentRepository(conn).get(document_id)
+    if not document:
+        raise click.ClickException(f"No document with id {document_id}")
+
+    context = AccessContext(
+        allowed_compartments=frozenset(compartments) if compartments else None,
+        allow_unclassified=include_unclassified,
+    )
+    decision = evaluate(document, context)
+
+    click.echo(f"document:     {document.title or document.source_ref}")
+    click.echo(f"sensitivity:  {document.sensitivity}")
+    click.echo(f"compartments: {document.compartments or '(none)'}")
+    click.echo()
+    click.echo(
+        "requested scope: compartments="
+        f"{sorted(compartments) if compartments else 'unrestricted'}, "
+        f"unclassified={'allowed' if include_unclassified else 'excluded'}"
+    )
+    click.echo()
+    click.secho(
+        f"decision: {'ALLOWED' if decision.allowed else 'DENIED'}",
+        fg="green" if decision.allowed else "red",
+    )
+    click.echo(f"reason:   {decision.reason}")
+
+    if not decision.allowed:
+        sys.exit(1)
 
 
 @cli.command()
@@ -446,7 +547,8 @@ def doctor() -> None:
     click.secho(
         "Not yet implemented in this build: real embedding/LLM providers "
         "(retrieval uses a placeholder hashing embedding), memory, context "
-        "steward, policy enforcement, and the MCP server.",
+        "steward, and the MCP server. Policy enforcement exists but is not "
+        "connected to anything except `pce search` yet.",
         fg="yellow",
     )
 
