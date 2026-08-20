@@ -1,9 +1,10 @@
 """`pce` command-line interface (PRD section 37).
 
 Commands backed by what's actually implemented (init, source, repo, sync,
-doctor) do real work against the local capsule. Commands whose subsystem
-doesn't exist yet (index, search, memory, context, policy, serve-mcp) say so
-explicitly and exit non-zero, rather than pretending to work.
+classify, index, search, compartment, policy explain, serve-mcp, doctor) do
+real work against the local capsule. Commands whose subsystem doesn't exist
+yet (memory, context) say so explicitly and exit non-zero, rather than
+pretending to work.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from pce.context.db import MIGRATIONS_DIR, connect
 from pce.context.models import Sensitivity
 from pce.context.registry import SourceRegistry
 from pce.context.repository import SourceDocumentRepository
+from pce.mcp.server import build_server as build_mcp_server
 from pce.policy.compartments import CompartmentRegistry
 from pce.policy.engine import AccessContext, evaluate
 from pce.providers.hashing_embeddings import HashingEmbeddingProvider
@@ -102,13 +104,13 @@ def init(compartments: tuple[str, ...]) -> None:
     click.echo("  pce compartment add <name>  define a compartment")
     click.echo("  pce index                   build the retrieval index")
     click.echo("  pce search \"...\"            search indexed context")
+    click.echo("  pce serve-mcp                connect a local model over MCP (see README.md)")
     click.echo("  pce doctor                  check the installation")
     click.echo()
     click.secho(
         "Not yet implemented in this build: a real local embedding model "
-        "(retrieval uses a placeholder hashing embedding for now), local "
-        "LLM configuration, and MCP connection instructions. See README.md "
-        "'Status'.",
+        "(retrieval uses a placeholder hashing embedding for now) and local "
+        "LLM configuration. See README.md 'Status'.",
         fg="yellow",
     )
 
@@ -546,9 +548,9 @@ def doctor() -> None:
     click.echo()
     click.secho(
         "Not yet implemented in this build: real embedding/LLM providers "
-        "(retrieval uses a placeholder hashing embedding), memory, context "
-        "steward, and the MCP server. Policy enforcement exists but is not "
-        "connected to anything except `pce search` yet.",
+        "(retrieval uses a placeholder hashing embedding), memory, and "
+        "context steward. Policy enforcement is wired into `pce search` and "
+        "`pce serve-mcp`; search_memory over MCP is a stub.",
         fg="yellow",
     )
 
@@ -557,9 +559,42 @@ def doctor() -> None:
 
 
 @cli.command("serve-mcp")
-def serve_mcp() -> None:
-    """Start the local MCP server."""
-    _not_yet_implemented("pce serve-mcp", "PRD section 36 (MCP Interface)")
+@click.option(
+    "--compartment",
+    "compartments",
+    multiple=True,
+    help=(
+        "Fixed compartment scope for this server (repeatable). This is set once at "
+        "startup by you, not something the connecting model can change — omit for no "
+        "compartment restriction."
+    ),
+)
+@click.option(
+    "--include-unclassified",
+    is_flag=True,
+    default=False,
+    help="Also allow documents with UNKNOWN sensitivity for this server's lifetime.",
+)
+def serve_mcp(compartments: tuple[str, ...], include_unclassified: bool) -> None:
+    """Start the local MCP server (stdio transport) with a fixed access scope."""
+    _, conn = _open_capsule()
+    access_context = AccessContext(
+        allowed_compartments=frozenset(compartments) if compartments else None,
+        allow_unclassified=include_unclassified,
+    )
+
+    # stdout is the MCP protocol channel once server.run() starts — every
+    # diagnostic here must go to stderr.
+    click.secho(
+        "Starting MCP server (stdio). Scope: compartments="
+        f"{sorted(compartments) if compartments else 'unrestricted'}, "
+        f"unclassified {'included' if include_unclassified else 'excluded'}.",
+        fg="cyan",
+        err=True,
+    )
+
+    server = build_mcp_server(conn, _EMBEDDING_PROVIDER, access_context)
+    server.run()
 
 
 if __name__ == "__main__":

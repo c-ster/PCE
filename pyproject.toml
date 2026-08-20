@@ -9,6 +9,7 @@ authors = [{ name = "PCE Contributors" }]
 dependencies = [
     "pydantic>=2.6",
     "click>=8.1",
+    "mcp>=1.2.0,<2",
 ]
 
 [project.urls]

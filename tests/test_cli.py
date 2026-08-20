@@ -1,9 +1,11 @@
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from click.testing import CliRunner
 
+import pce.cli.main as cli_main
 from pce.cli.main import cli
 
 
@@ -151,7 +153,6 @@ def test_compartment_add_and_list(runner: CliRunner, capsule_env: dict):
         ["context", "inbox"],
         ["context", "review"],
         ["context", "stats"],
-        ["serve-mcp"],
     ],
 )
 def test_unimplemented_commands_fail_honestly(runner: CliRunner, capsule_env: dict, args: list):
@@ -288,3 +289,37 @@ def test_policy_explain_allows_after_classification(runner: CliRunner, capsule_e
     result = runner.invoke(cli, ["policy", "explain", document_id], env=capsule_env)
     assert result.exit_code == 0
     assert "ALLOWED" in result.output
+
+
+def test_serve_mcp_builds_fixed_scope_and_runs_server(runner: CliRunner, capsule_env: dict, monkeypatch):
+    runner.invoke(cli, ["init"], env=capsule_env)
+
+    fake_server = MagicMock()
+    fake_build_server = MagicMock(return_value=fake_server)
+    monkeypatch.setattr(cli_main, "build_mcp_server", fake_build_server)
+
+    result = runner.invoke(
+        cli, ["serve-mcp", "--compartment", "PERSONAL", "--include-unclassified"], env=capsule_env
+    )
+
+    assert result.exit_code == 0, result.output
+    fake_server.run.assert_called_once()
+
+    _, _, access_context = fake_build_server.call_args[0]
+    assert access_context.allowed_compartments == frozenset({"PERSONAL"})
+    assert access_context.allow_unclassified is True
+
+
+def test_serve_mcp_defaults_to_unrestricted_compartments(runner: CliRunner, capsule_env: dict, monkeypatch):
+    runner.invoke(cli, ["init"], env=capsule_env)
+
+    fake_server = MagicMock()
+    fake_build_server = MagicMock(return_value=fake_server)
+    monkeypatch.setattr(cli_main, "build_mcp_server", fake_build_server)
+
+    result = runner.invoke(cli, ["serve-mcp"], env=capsule_env)
+
+    assert result.exit_code == 0, result.output
+    _, _, access_context = fake_build_server.call_args[0]
+    assert access_context.allowed_compartments is None
+    assert access_context.allow_unclassified is False

@@ -30,18 +30,22 @@ Foundational build-out, tracking [PRD v0.1](docs/ARCHITECTURE.md). Current slice
   of results afterward: `UNKNOWN` sensitivity is excluded from search by
   default (fails closed), and a document scoped to a compartment the caller
   wasn't granted never surfaces, however relevant
+- A local MCP server (`pce serve-mcp`, stdio transport) exposing
+  `search_context` and `read_source` to any MCP-compatible client (Jan,
+  Claude Desktop/Code, Open WebUI, a bare `mcp` client). The access scope is
+  fixed by whoever starts the server, not something the connecting model can
+  widen via tool arguments.
 
 Not yet implemented: a real local embedding model, context router, context
-steward, memory governance, MCP server. See
+steward, memory governance (`search_memory` exists as an honest stub). See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design and
 [docs/PRIVACY.md](docs/PRIVACY.md) / [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
 for the security posture.
 
 > **Caveat:** there's no authentication/session concept yet — `pce search`'s
-> `--compartment`/`--include-unclassified` flags are how *you* narrow what a
-> given search call can see, not a barrier against another local user. The
-> policy engine (`pce/policy/engine.py`) is what the future MCP server will
-> use to scope what a model is allowed to retrieve.
+> and `pce serve-mcp`'s `--compartment`/`--include-unclassified` flags are
+> how *you* declare what a given search or server session can see, not a
+> barrier against another local user.
 
 ## Install (development)
 
@@ -72,6 +76,27 @@ search` excludes by default (PRD section 27: unknown fails closed) — pass
 `pce --help` lists every command. `PCE_HOME` overrides the capsule location
 (defaults to `~/.pce`) — handy for trying PCE without touching your real
 capsule.
+
+## Connecting a local model
+
+`pce serve-mcp` starts a stdio MCP server. Point any MCP-compatible client
+at it — for example, in Jan's or Claude Desktop's MCP config:
+
+```json
+{
+  "mcpServers": {
+    "pce": {
+      "command": "pce",
+      "args": ["serve-mcp", "--include-unclassified"]
+    }
+  }
+}
+```
+
+Drop `--include-unclassified` once you've classified what you want visible
+(see `pce classify` above) — leaving it off is the fail-closed default.
+`search_context` and `read_source` are available; `search_memory` is a
+placeholder until durable memory exists.
 
 Or use the library directly:
 
@@ -104,7 +129,7 @@ pce/
 ├── router/       # intent classification before retrieval
 ├── policy/       # sensitivity/compartment access control
 ├── providers/    # LLM / embedding / reranker provider interfaces
-├── mcp/          # local MCP server
+├── mcp/          # local MCP server (search_context, read_source, search_memory)
 └── cli/          # pce command-line interface
 ```
 
