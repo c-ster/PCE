@@ -1,10 +1,10 @@
 """`pce` command-line interface (PRD section 37).
 
 Commands backed by what's actually implemented (init, source, repo, sync,
-classify, index, search, compartment, policy explain, serve-mcp, doctor) do
-real work against the local capsule. Commands whose subsystem doesn't exist
-yet (memory, context) say so explicitly and exit non-zero, rather than
-pretending to work.
+classify, index, search, compartment, policy explain, assertion, serve-mcp,
+doctor) do real work against the local capsule. Commands whose subsystem
+doesn't exist yet (memory, context) say so explicitly and exit non-zero,
+rather than pretending to work.
 """
 
 from __future__ import annotations
@@ -26,8 +26,10 @@ from pce.cli.home import (
     is_initialized,
     require_initialized,
 )
+from pce.context.assertions import AssertionRepository, AssertionStatus, ContextAssertion
 from pce.context.chunks import ChunkRepository
 from pce.context.db import MIGRATIONS_DIR, connect
+from pce.context.events import ContextEvent, ContextEventType, EventRepository
 from pce.context.models import Sensitivity
 from pce.context.registry import SourceRegistry
 from pce.context.repository import SourceDocumentRepository
@@ -247,6 +249,166 @@ def classify(document_id: str, sensitivity: str | None, compartments: tuple[str,
     updated = document.model_copy(update=updates)
     doc_repo.upsert(updated)
     click.echo(f"Updated {document_id}: sensitivity={updated.sensitivity}, compartments={updated.compartments}")
+
+
+@cli.group()
+def assertion() -> None:
+    """Manage durable context assertions (PRD section 12-14)."""
+
+
+@assertion.command("add")
+@click.option("--subject", required=True)
+@click.option("--predicate", required=True)
+@click.option("--value", required=True)
+@click.option(
+    "--status", type=click.Choice([s.value for s in AssertionStatus]), default=AssertionStatus.PROPOSED.value
+)
+@click.option("--importance", type=float, default=0.5, show_default=True)
+@click.option("--confidence", type=float, default=0.5, show_default=True)
+@click.option("--source", "source_document_id", help="SourceDocument id this assertion is derived from.")
+@click.option("--supersedes", help="Id of an existing assertion this one replaces.")
+def assertion_add(
+    subject: str,
+    predicate: str,
+    value: str,
+    status: str,
+    importance: float,
+    confidence: float,
+    source_document_id: str | None,
+    supersedes: str | None,
+) -> None:
+    """Record a new assertion, optionally superseding an existing one."""
+    _, conn = _open_capsule()
+    repo = AssertionRepository(conn)
+
+    if source_document_id and SourceDocumentRepository(conn).get(source_document_id) is None:
+        raise click.ClickException(f"No document with id {source_document_id}")
+
+    new_assertion = ContextAssertion(
+        subject=subject,
+        predicate=predicate,
+        value=value,
+        status=AssertionStatus(status),
+        importance=importance,
+        confidence=confidence,
+        source=source_document_id,
+    )
+
+    if supersedes:
+        if repo.get(supersedes) is None:
+            raise click.ClickException(f"No assertion with id {supersedes}")
+        stored = repo.supersede(supersedes, new_assertion)
+        click.echo(f"Created {stored.id}, superseding {supersedes}")
+    else:
+        stored = repo.create(new_assertion)
+        click.echo(f"Created {stored.id}")
+
+    click.echo(f"{stored.subject} {stored.predicate} = {stored.value!r} [{stored.status}]")
+
+
+@assertion.command("list")
+@click.option("--subject", help="Restrict to one subject. Omit to list every current assertion.")
+def assertion_list(subject: str | None) -> None:
+    """List current assertions — the head of each supersession chain."""
+    _, conn = _open_capsule()
+    current = AssertionRepository(conn).list_current(subject=subject)
+
+    if not current:
+        click.echo("No assertions recorded yet. Add one with `pce assertion add`.")
+        return
+
+    for item in current:
+        click.echo(f"{item.id}  {item.subject}  {item.predicate} = {item.value!r}  [{item.status}]")
+
+
+@assertion.command("history")
+@click.argument("subject")
+@click.argument("predicate")
+def assertion_history(subject: str, predicate: str) -> None:
+    """Show the full supersession chain for one (subject, predicate), oldest first."""
+    _, conn = _open_capsule()
+    chain = AssertionRepository(conn).list_history(subject, predicate)
+
+    if not chain:
+        click.echo(f"No assertions for {subject} {predicate}.")
+        return
+
+    for item in chain:
+        marker = "-> " if item.superseded_by is None else "   "
+        click.echo(
+            f"{marker}{item.valid_from.isoformat()}  {item.value!r}  [{item.status}]  id={item.id}"
+        )
+
+
+@assertion.command("show")
+@click.argument("assertion_id")
+def assertion_show(assertion_id: str) -> None:
+    """Show every field of one assertion, including its supersession links."""
+    _, conn = _open_capsule()
+    item = AssertionRepository(conn).get(assertion_id)
+    if not item:
+        raise click.ClickException(f"No assertion with id {assertion_id}")
+
+    for field_name, field_value in item.model_dump().items():
+        click.echo(f"{field_name}: {field_value}")
+
+
+@assertion.command("confirm")
+@click.argument("assertion_id")
+def assertion_confirm(assertion_id: str) -> None:
+    """Record that this assertion was reconfirmed as still true, unchanged."""
+    _, conn = _open_capsule()
+    try:
+        updated = AssertionRepository(conn).confirm(assertion_id)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Confirmed {updated.id} at {updated.last_confirmed_at.isoformat()}")
+
+
+@assertion.command("approve")
+@click.argument("assertion_id")
+def assertion_approve(assertion_id: str) -> None:
+    """Mark an assertion approved and record a DECISION_MADE event."""
+    _, conn = _open_capsule()
+    repo = AssertionRepository(conn)
+    try:
+        updated = repo.set_status(assertion_id, AssertionStatus.APPROVED)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    EventRepository(conn).record(
+        ContextEvent(
+            event_type=ContextEventType.DECISION_MADE,
+            subject=updated.subject,
+            assertion_id=updated.id,
+            description=f"{updated.subject} {updated.predicate} approved: {updated.value!r}",
+            source=updated.source,
+        )
+    )
+    click.echo(f"Approved {updated.id}")
+
+
+@assertion.command("reject")
+@click.argument("assertion_id")
+def assertion_reject(assertion_id: str) -> None:
+    """Mark an assertion rejected and record a DECISION_REVERSED event."""
+    _, conn = _open_capsule()
+    repo = AssertionRepository(conn)
+    try:
+        updated = repo.set_status(assertion_id, AssertionStatus.REJECTED)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    EventRepository(conn).record(
+        ContextEvent(
+            event_type=ContextEventType.DECISION_REVERSED,
+            subject=updated.subject,
+            assertion_id=updated.id,
+            description=f"{updated.subject} {updated.predicate} rejected: {updated.value!r}",
+            source=updated.source,
+        )
+    )
+    click.echo(f"Rejected {updated.id}")
 
 
 @cli.group()
@@ -538,6 +700,9 @@ def doctor() -> None:
 
         chunk_repo = ChunkRepository(conn)
         checks.append(("retrieval index", True, f"{chunk_repo.count()} chunk(s) indexed (run `pce index` to build/refresh)"))
+
+        assertion_count = len(AssertionRepository(conn).list_current())
+        checks.append(("context assertions", True, f"{assertion_count} current assertion(s)"))
 
     all_ok = True
     for label, ok, detail in checks:

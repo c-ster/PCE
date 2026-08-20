@@ -6,11 +6,13 @@ See docs/ARCHITECTURE.md section "Canonical context model" and PRD sections
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import StrEnum
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
+
+from pce.context.time import utcnow
 
 
 class EpistemicRole(StrEnum):
@@ -60,10 +62,6 @@ class SourceStatus(StrEnum):
     REMOVED = "removed"
 
 
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 class SourceDocument(BaseModel):
     """A single ingested resource, in PCE's canonical context model."""
 
@@ -80,7 +78,7 @@ class SourceDocument(BaseModel):
 
     created_at_source: datetime | None = None
     updated_at_source: datetime | None = None
-    ingested_at: datetime = Field(default_factory=_utcnow)
+    ingested_at: datetime = Field(default_factory=utcnow)
 
     domains: list[str] = Field(default_factory=list)
     projects: list[str] = Field(default_factory=list)

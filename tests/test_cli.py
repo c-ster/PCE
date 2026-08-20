@@ -323,3 +323,95 @@ def test_serve_mcp_defaults_to_unrestricted_compartments(runner: CliRunner, caps
     _, _, access_context = fake_build_server.call_args[0]
     assert access_context.allowed_compartments is None
     assert access_context.allow_unclassified is False
+
+
+def _first_line_id(output: str) -> str:
+    return output.splitlines()[0].split()[1]
+
+
+def test_assertion_add_list_history_show(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+
+    add_result = runner.invoke(
+        cli,
+        ["assertion", "add", "--subject", "project:nightingale", "--predicate", "status", "--value", "proposed"],
+        env=capsule_env,
+    )
+    assert add_result.exit_code == 0, add_result.output
+    january_id = _first_line_id(add_result.output)
+
+    supersede_result = runner.invoke(
+        cli,
+        [
+            "assertion",
+            "add",
+            "--subject",
+            "project:nightingale",
+            "--predicate",
+            "status",
+            "--value",
+            "approved",
+            "--status",
+            "approved",
+            "--supersedes",
+            january_id,
+        ],
+        env=capsule_env,
+    )
+    assert supersede_result.exit_code == 0, supersede_result.output
+    assert "superseding" in supersede_result.output
+
+    list_result = runner.invoke(cli, ["assertion", "list"], env=capsule_env)
+    assert "approved" in list_result.output
+    assert january_id not in list_result.output  # superseded, not current
+
+    history_result = runner.invoke(
+        cli, ["assertion", "history", "project:nightingale", "status"], env=capsule_env
+    )
+    assert "proposed" in history_result.output
+    assert "approved" in history_result.output
+
+    show_result = runner.invoke(cli, ["assertion", "show", january_id], env=capsule_env)
+    assert "superseded" in show_result.output
+    assert "superseded_by:" in show_result.output
+
+
+def test_assertion_add_with_unknown_source_document_errors(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    result = runner.invoke(
+        cli,
+        [
+            "assertion",
+            "add",
+            "--subject",
+            "a",
+            "--predicate",
+            "b",
+            "--value",
+            "c",
+            "--source",
+            "does-not-exist",
+        ],
+        env=capsule_env,
+    )
+    assert result.exit_code != 0
+
+
+def test_assertion_confirm_approve_reject(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    add_result = runner.invoke(
+        cli, ["assertion", "add", "--subject", "a", "--predicate", "b", "--value", "c"], env=capsule_env
+    )
+    assertion_id = _first_line_id(add_result.output)
+
+    confirm_result = runner.invoke(cli, ["assertion", "confirm", assertion_id], env=capsule_env)
+    assert confirm_result.exit_code == 0
+    assert "Confirmed" in confirm_result.output
+
+    approve_result = runner.invoke(cli, ["assertion", "approve", assertion_id], env=capsule_env)
+    assert approve_result.exit_code == 0
+    assert "Approved" in approve_result.output
+
+    reject_result = runner.invoke(cli, ["assertion", "reject", assertion_id], env=capsule_env)
+    assert reject_result.exit_code == 0
+    assert "Rejected" in reject_result.output

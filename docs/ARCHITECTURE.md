@@ -65,6 +65,18 @@ Facts are never destroyed when they change — a new `ContextAssertion`
 supersedes the old one, and both remain retrievable. "What is the current
 price?" and "why did we originally consider $3?" are both answerable.
 
+**Implemented** in `pce/context/assertions.py`: `AssertionRepository.supersede()`
+never mutates or deletes the old row — it closes its `valid_until`, links
+`superseded_by`, and sets `status: superseded`, while inserting the new
+assertion with `supersedes` pointing back. `list_current()` gives the
+"what's true now" view (`superseded_by IS NULL`); `list_history()` walks
+the full chain oldest-first. Paired with an append-only `ContextEvent` log
+(`pce/context/events.py`, section 14) for domain-level history that isn't
+just "the latest assertion" — `SOURCE_SUPERSEDED` is emitted automatically
+on every supersession; other event types (`DECISION_MADE`, `PROJECT_STARTED`,
+...) are recorded explicitly by callers that know what happened, since
+they aren't derivable from assertion state alone. CLI: `pce assertion`.
+
 ## Retrieval
 
 Hybrid search: SQLite FTS5/BM25 (lexical) combined with a local embedding

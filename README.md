@@ -35,6 +35,12 @@ Foundational build-out, tracking [PRD v0.1](docs/ARCHITECTURE.md). Current slice
   Claude Desktop/Code, Open WebUI, a bare `mcp` client). The access scope is
   fixed by whoever starts the server, not something the connecting model can
   widen via tool arguments.
+- `ContextAssertion`s (`pce assertion`): durable claims that survive being
+  superseded — superseding one never deletes the old row, it closes its
+  `valid_until` and links `superseded_by`, so "what's the current price" and
+  "why did we originally consider $3" are both answerable. Paired with an
+  append-only `ContextEvent` log (`SOURCE_SUPERSEDED`, `DECISION_MADE`,
+  `DECISION_REVERSED`, ...).
 
 Not yet implemented: a real local embedding model, context router, context
 steward, memory governance (`search_memory` exists as an honest stub). See
@@ -66,6 +72,13 @@ pce index
 pce search "concise technical explanations preference" --include-unclassified
 pce classify <document-id> --sensitivity public --compartment PERSONAL
 pce policy explain <document-id> --compartment PERSONAL
+
+pce assertion add --subject "project:nightingale" --predicate status --value proposed
+pce assertion add --subject "project:nightingale" --predicate status --value approved \
+  --status approved --supersedes <id-from-above>
+pce assertion list                                  # current state only
+pce assertion history "project:nightingale" status  # full chain, including superseded
+
 pce doctor
 ```
 
@@ -122,7 +135,7 @@ print(repo.list())
 ```text
 pce/
 ├── adapters/     # SourceAdapter implementations (local file, git, ...)
-├── context/      # SourceDocument model, SQLite persistence
+├── context/      # SourceDocument, ContextAssertion, ContextEvent, SQLite persistence
 ├── retrieval/    # hybrid lexical + semantic search
 ├── memory/       # durable memory + governance
 ├── steward/      # context health, conflicts, staleness detection
