@@ -53,7 +53,15 @@ for the security posture.
 > how *you* declare what a given search or server session can see, not a
 > barrier against another local user.
 
-## Install (development)
+## Install
+
+New to the command line, or just want the simplest path? See
+**[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)** — a no-jargon,
+step-by-step guide. It uses [`install.sh`](install.sh), a plain-text script
+you can read before running (deliberately not a `curl | bash` one-liner —
+that's a bad habit to encourage on a privacy tool).
+
+For development:
 
 ```bash
 python3.12 -m venv .venv
