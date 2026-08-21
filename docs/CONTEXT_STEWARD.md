@@ -46,3 +46,14 @@ observations become durable context.
 The model may propose memory; it must never silently promote inferred
 information into authoritative durable memory. Every suggested memory is
 presented with `Save / Edit / Don't save`.
+
+**Implemented** in `pce/memory/observations.py`: a `ContextObservation`
+starts `proposed` and stays inert — `pce memory accept` ("Save") is what
+actually creates the durable `ContextAssertion`; `pce memory edit` ("Edit")
+changes the proposal's text while it's still proposed; `pce memory reject`
+("Don't save") resolves it with no durable trace at all. Exposed over MCP
+as `accept_observation`/`reject_observation`, and `search_memory` searches
+current assertions by substring match. Nothing here yet *generates*
+observations automatically — that's Context Steward pattern-detection
+work, not yet built; today an observation is proposed explicitly via
+`pce memory propose` or the equivalent MCP call.

@@ -49,9 +49,14 @@ Foundational build-out, tracking [PRD v0.1](docs/ARCHITECTURE.md). Current slice
   describe. Runs strictly after policy filtering; it reorders, it never
   re-includes something policy excluded. Shows up as "Detected intent:" in
   `pce search` output.
+- **Memory governance** (`pce memory`): a proposed `ContextObservation`
+  never becomes durable on its own — `propose` → `accept` ("Save", creates
+  a `ContextAssertion`) / `edit` / `reject` ("Don't save", no durable trace
+  at all). Exposed over MCP as `accept_observation`/`reject_observation`;
+  `search_memory` is now real (substring search over current assertions).
 
-Not yet implemented: a real local embedding model, context steward, memory
-governance (`search_memory` exists as an honest stub). See
+Not yet implemented: a real local embedding model, Context Steward
+(pattern/conflict/staleness detection), Context Inbox. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design and
 [docs/PRIVACY.md](docs/PRIVACY.md) / [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
 for the security posture.
@@ -95,6 +100,11 @@ pce assertion add --subject "project:nightingale" --predicate status --value app
   --status approved --supersedes <id-from-above>
 pce assertion list                                  # current state only
 pce assertion history "project:nightingale" status  # full chain, including superseded
+
+pce memory propose --subject "user:preferences" --description "Likes concise answers."
+pce memory list --status proposed
+pce memory accept <observation-id>   # "Save" — creates the durable assertion
+# pce memory reject <observation-id> would discard it with no durable trace
 
 pce doctor
 ```

@@ -1,10 +1,12 @@
 from pathlib import Path
 
 from pce.adapters.local_file import LocalFileAdapter
+from pce.context.assertions import AssertionRepository, ContextAssertion
 from pce.context.db import connect
 from pce.context.registry import SourceRegistry
 from pce.context.repository import SourceDocumentRepository
 from pce.mcp import tools
+from pce.memory.observations import ContextObservation, ObservationRepository
 from pce.policy.engine import AccessContext
 from pce.providers.hashing_embeddings import HashingEmbeddingProvider
 from pce.retrieval.indexer import build_index
@@ -83,7 +85,48 @@ def test_read_source_missing_document_returns_error(tmp_path: Path):
     assert "error" in result
 
 
-def test_search_memory_reports_not_implemented():
-    result = tools.search_memory("anything")
+def test_search_memory_finds_current_assertions(tmp_path: Path):
+    conn, _ = _build_indexed_corpus(tmp_path)
+    AssertionRepository(conn).create(
+        ContextAssertion(subject="project:nightingale", predicate="price", value="5000")
+    )
+
+    results = tools.search_memory(conn, "nightingale")
+    assert len(results) == 1
+    assert results[0]["subject"] == "project:nightingale"
+
+
+def test_search_memory_no_match_returns_empty(tmp_path: Path):
+    conn, _ = _build_indexed_corpus(tmp_path)
+    assert tools.search_memory(conn, "nonexistent-subject") == []
+
+
+def test_accept_observation_creates_assertion(tmp_path: Path):
+    conn, _ = _build_indexed_corpus(tmp_path)
+    observation = ObservationRepository(conn).create(
+        ContextObservation(subject="user:preferences", description="Likes terse answers.")
+    )
+
+    result = tools.accept_observation(conn, observation.id)
+    assert "error" not in result
+    assert result["value"] == "Likes terse answers."
+
+    [current] = AssertionRepository(conn).list_current(subject="user:preferences")
+    assert current.id == result["assertion_id"]
+
+
+def test_accept_observation_unknown_id_returns_error(tmp_path: Path):
+    conn, _ = _build_indexed_corpus(tmp_path)
+    result = tools.accept_observation(conn, "does-not-exist")
     assert "error" in result
-    assert "not implemented" in result["error"]
+
+
+def test_reject_observation_creates_no_assertion(tmp_path: Path):
+    conn, _ = _build_indexed_corpus(tmp_path)
+    observation = ObservationRepository(conn).create(
+        ContextObservation(subject="user:preferences", description="Some pattern.")
+    )
+
+    result = tools.reject_observation(conn, observation.id)
+    assert result["status"] == "rejected"
+    assert AssertionRepository(conn).list_current() == []

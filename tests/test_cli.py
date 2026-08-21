@@ -149,7 +149,6 @@ def test_compartment_add_and_list(runner: CliRunner, capsule_env: dict):
 @pytest.mark.parametrize(
     "args",
     [
-        ["memory", "list"],
         ["context", "inbox"],
         ["context", "review"],
         ["context", "stats"],
@@ -434,3 +433,69 @@ def test_assertion_confirm_approve_reject(runner: CliRunner, capsule_env: dict):
     reject_result = runner.invoke(cli, ["assertion", "reject", assertion_id], env=capsule_env)
     assert reject_result.exit_code == 0
     assert "Rejected" in reject_result.output
+
+
+def test_memory_propose_list_accept(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+
+    propose_result = runner.invoke(
+        cli,
+        ["memory", "propose", "--subject", "user:preferences", "--description", "Likes concise answers."],
+        env=capsule_env,
+    )
+    assert propose_result.exit_code == 0, propose_result.output
+    observation_id = _first_line_id(propose_result.output)
+
+    list_result = runner.invoke(cli, ["memory", "list"], env=capsule_env)
+    assert "Likes concise answers." in list_result.output
+    assert "proposed" in list_result.output
+
+    accept_result = runner.invoke(cli, ["memory", "accept", observation_id], env=capsule_env)
+    assert accept_result.exit_code == 0, accept_result.output
+    assert "Accepted" in accept_result.output
+
+    current = runner.invoke(cli, ["assertion", "list"], env=capsule_env)
+    assert "Likes concise answers." in current.output
+
+
+def test_memory_reject_leaves_no_assertion(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    propose_result = runner.invoke(
+        cli, ["memory", "propose", "--subject", "a", "--description", "some pattern"], env=capsule_env
+    )
+    observation_id = _first_line_id(propose_result.output)
+
+    reject_result = runner.invoke(cli, ["memory", "reject", observation_id], env=capsule_env)
+    assert reject_result.exit_code == 0
+    assert "Rejected" in reject_result.output
+
+    current = runner.invoke(cli, ["assertion", "list"], env=capsule_env)
+    assert "No assertions recorded" in current.output
+
+
+def test_memory_edit_before_accepting(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    propose_result = runner.invoke(
+        cli, ["memory", "propose", "--subject", "a", "--description", "rough draft"], env=capsule_env
+    )
+    observation_id = _first_line_id(propose_result.output)
+
+    edit_result = runner.invoke(cli, ["memory", "edit", observation_id, "polished version"], env=capsule_env)
+    assert edit_result.exit_code == 0
+    assert "polished version" in edit_result.output
+
+    list_result = runner.invoke(cli, ["memory", "list"], env=capsule_env)
+    assert "polished version" in list_result.output
+    assert "rough draft" not in list_result.output
+
+
+def test_memory_accept_twice_errors(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    propose_result = runner.invoke(
+        cli, ["memory", "propose", "--subject", "a", "--description", "x"], env=capsule_env
+    )
+    observation_id = _first_line_id(propose_result.output)
+    runner.invoke(cli, ["memory", "accept", observation_id], env=capsule_env)
+
+    second = runner.invoke(cli, ["memory", "accept", observation_id], env=capsule_env)
+    assert second.exit_code != 0

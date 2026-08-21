@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import sqlite3
 
+from pce.context.assertions import AssertionRepository
 from pce.context.chunks import ChunkRepository
 from pce.context.repository import SourceDocumentRepository
+from pce.memory.observations import ObservationRepository
 from pce.policy.engine import AccessContext, evaluate
 from pce.providers.base import EmbeddingProvider
 from pce.router.search import route_and_search
@@ -60,5 +62,53 @@ def read_source(conn: sqlite3.Connection, access_context: AccessContext, documen
     }
 
 
-def search_memory(query: str) -> dict:
-    return {"error": "search_memory is not implemented yet in this build (PRD section 25, Memory Governance)"}
+def search_memory(conn: sqlite3.Connection, query: str, limit: int = 10) -> list[dict]:
+    """Searches durable memory (current ContextAssertions) by plain
+    case-insensitive substring match — boring and inspectable, no separate
+    index needed at this scale. Does not yet apply sensitivity/compartment
+    policy: ContextAssertion has no sensitivity field of its own."""
+    lowered = query.lower()
+    matches = []
+    for assertion in AssertionRepository(conn).list_current():
+        haystack = f"{assertion.subject} {assertion.predicate} {assertion.value}".lower()
+        if lowered in haystack:
+            matches.append(
+                {
+                    "assertion_id": assertion.id,
+                    "subject": assertion.subject,
+                    "predicate": assertion.predicate,
+                    "value": assertion.value,
+                    "status": assertion.status.value,
+                    "confidence": assertion.confidence,
+                }
+            )
+    return matches[:limit]
+
+
+def accept_observation(
+    conn: sqlite3.Connection, observation_id: str, predicate: str = "observation", value: str | None = None
+) -> dict:
+    """"Save": promotes a proposed observation into a durable
+    ContextAssertion. Only call this after the human has actually approved
+    it (section 25) — this tool itself does not verify that; it does
+    whatever it's asked, same as read_source/search_context."""
+    try:
+        observation, assertion = ObservationRepository(conn).accept(observation_id, predicate=predicate, value=value)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {
+        "observation_id": observation.id,
+        "assertion_id": assertion.id,
+        "subject": assertion.subject,
+        "predicate": assertion.predicate,
+        "value": assertion.value,
+    }
+
+
+def reject_observation(conn: sqlite3.Connection, observation_id: str) -> dict:
+    """"Don't save": rejects a proposed observation. No assertion is created."""
+    try:
+        observation = ObservationRepository(conn).reject(observation_id)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"observation_id": observation.id, "status": observation.status.value}

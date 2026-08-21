@@ -34,6 +34,7 @@ from pce.context.models import EpistemicRole, Sensitivity
 from pce.context.registry import SourceRegistry
 from pce.context.repository import SourceDocumentRepository
 from pce.mcp.server import build_server as build_mcp_server
+from pce.memory.observations import ContextObservation, ObservationRepository, ObservationStatus
 from pce.policy.compartments import CompartmentRegistry
 from pce.policy.engine import AccessContext, evaluate
 from pce.providers.hashing_embeddings import HashingEmbeddingProvider
@@ -569,12 +570,86 @@ def search(query: str, limit: int, compartments: tuple[str, ...], include_unclas
 
 @cli.group()
 def memory() -> None:
-    """Durable memory commands."""
+    """Durable memory commands (PRD sections 24-25)."""
+
+
+@memory.command("propose")
+@click.option("--subject", required=True)
+@click.option("--description", required=True, help="The pattern or preference being proposed.")
+@click.option("--confidence", type=float, default=0.5, show_default=True)
+@click.option("--source", "source_document_id", help="SourceDocument id this observation is derived from.")
+def memory_propose(subject: str, description: str, confidence: float, source_document_id: str | None) -> None:
+    """Propose an observation. Never becomes durable on its own — accept it explicitly to save it."""
+    _, conn = _open_capsule()
+
+    if source_document_id and SourceDocumentRepository(conn).get(source_document_id) is None:
+        raise click.ClickException(f"No document with id {source_document_id}")
+
+    observation = ObservationRepository(conn).create(
+        ContextObservation(subject=subject, description=description, confidence=confidence, source=source_document_id)
+    )
+    click.echo(f"Proposed {observation.id}")
+    click.echo(f"{observation.subject}: {observation.description!r}  [{observation.status}]")
 
 
 @memory.command("list")
-def memory_list() -> None:
-    _not_yet_implemented("pce memory list", "PRD section 25 (Memory Governance)")
+@click.option(
+    "--status",
+    type=click.Choice([s.value for s in ObservationStatus]),
+    default=None,
+    help="Filter by status. Omit to show everything.",
+)
+def memory_list(status: str | None) -> None:
+    """List observations."""
+    _, conn = _open_capsule()
+    observations = ObservationRepository(conn).list(status=ObservationStatus(status) if status else None)
+
+    if not observations:
+        click.echo("No observations recorded yet. Propose one with `pce memory propose`.")
+        return
+
+    for item in observations:
+        click.echo(f"{item.id}  {item.subject}: {item.description!r}  [{item.status}]")
+
+
+@memory.command("edit")
+@click.argument("observation_id")
+@click.argument("description")
+def memory_edit(observation_id: str, description: str) -> None:
+    """Edit a still-proposed observation's description before accepting or rejecting it."""
+    _, conn = _open_capsule()
+    try:
+        updated = ObservationRepository(conn).edit(observation_id, description)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Updated {updated.id}: {updated.description!r}")
+
+
+@memory.command("accept")
+@click.argument("observation_id")
+@click.option("--predicate", default="observation", show_default=True)
+@click.option("--value", help="Override the assertion's value. Defaults to the observation's description.")
+def memory_accept(observation_id: str, predicate: str, value: str | None) -> None:
+    """"Save": promote this observation into a durable ContextAssertion."""
+    _, conn = _open_capsule()
+    try:
+        observation, assertion = ObservationRepository(conn).accept(observation_id, predicate=predicate, value=value)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Accepted {observation.id} -> assertion {assertion.id}")
+    click.echo(f"{assertion.subject} {assertion.predicate} = {assertion.value!r}")
+
+
+@memory.command("reject")
+@click.argument("observation_id")
+def memory_reject(observation_id: str) -> None:
+    """"Don't save": reject this observation. No assertion is created."""
+    _, conn = _open_capsule()
+    try:
+        updated = ObservationRepository(conn).reject(observation_id)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Rejected {updated.id}")
 
 
 @cli.group(name="context")

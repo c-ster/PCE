@@ -1,11 +1,11 @@
 """Local MCP server (PRD section 36).
 
-Exposes read-only tools over a fixed AccessContext set at startup by
-whoever ran `pce serve-mcp` — the connecting model cannot expand its own
-access via tool arguments (section 26: the LLM is not the security
-boundary). Only search_context, read_source, and search_memory are
-implemented; the context-question/observation tools depend on the Context
-Steward, which doesn't exist yet.
+Exposes tools over a fixed AccessContext set at startup by whoever ran
+`pce serve-mcp` — the connecting model cannot expand its own access via
+tool arguments (section 26: the LLM is not the security boundary).
+search_context, read_source, search_memory, accept_observation, and
+reject_observation are implemented; the context-question tools depend on
+the Context Steward, which doesn't exist yet.
 
 Once running, this process's stdout carries the MCP stdio protocol itself —
 any diagnostic printing must go to stderr (see pce/cli/main.py's serve-mcp
@@ -54,8 +54,22 @@ def build_server(
         return tools.read_source(conn, access_context, document_id)
 
     @server.tool()
-    def search_memory(query: str) -> dict:
-        """Search durable memory. Not implemented yet in this build."""
-        return tools.search_memory(query)
+    def search_memory(query: str, limit: int = 10) -> list[dict]:
+        """Search durable memory (accepted, current ContextAssertions) by
+        substring match."""
+        return tools.search_memory(conn, query, limit=limit)
+
+    @server.tool()
+    def accept_observation(observation_id: str, predicate: str = "observation", value: str | None = None) -> dict:
+        """Promote a proposed observation into durable memory. Only call
+        this after the human has actually approved it (PRD section 25,
+        "Suggested memory: Save / Edit / Don't save") — this tool does not
+        verify that on its own."""
+        return tools.accept_observation(conn, observation_id, predicate=predicate, value=value)
+
+    @server.tool()
+    def reject_observation(observation_id: str) -> dict:
+        """Reject a proposed observation. No durable memory is created."""
+        return tools.reject_observation(conn, observation_id)
 
     return server
