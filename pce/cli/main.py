@@ -99,6 +99,7 @@ def init(compartments: tuple[str, ...]) -> None:
     click.echo("  pce compartment add <name>  define a compartment")
     click.echo("  pce index                   build the retrieval index")
     click.echo("  pce search \"...\"            search indexed context")
+    click.echo("  pce context review          check for conflicts and stale facts")
     click.echo("  pce serve-mcp                connect a local model over MCP (see README.md)")
     click.echo("  pce doctor                  check the installation")
     click.echo()
@@ -869,6 +870,9 @@ def doctor() -> None:
         assertion_count = len(AssertionRepository(conn).list_current())
         checks.append(("context assertions", True, f"{assertion_count} current assertion(s)"))
 
+        open_questions = len(QuestionRepository(conn).list(statuses=(QuestionStatus.OPEN,)))
+        checks.append(("context inbox", True, f"{open_questions} open question(s) (run `pce context review` to scan)"))
+
     all_ok = True
     for label, ok, detail in checks:
         symbol = "OK  " if ok else "WARN"
@@ -877,10 +881,10 @@ def doctor() -> None:
 
     click.echo()
     click.secho(
-        "Not yet implemented in this build: real embedding/LLM providers "
-        "(retrieval uses a placeholder hashing embedding), memory, and "
-        "context steward. Policy enforcement is wired into `pce search` and "
-        "`pce serve-mcp`; search_memory over MCP is a stub.",
+        "Still placeholder rather than real: the embedding model (retrieval "
+        "works, just not with true semantic understanding) and local LLM "
+        "configuration. Everything else in `pce --help` does real work — "
+        "see README.md 'Status'.",
         fg="yellow",
     )
 
