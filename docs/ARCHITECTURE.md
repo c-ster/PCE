@@ -86,6 +86,16 @@ retrieval prefers the right kind of evidence (e.g. manuscripts for "rewrite
 this in my voice," contractual records for "what did we commit to this
 customer?").
 
+**Implemented** in `pce/router/intent.py` (`classify_intent()` — a boring,
+inspectable keyword heuristic, not an LLM call, so this works fully
+offline) and `pce/router/search.py` (`route_and_search()`, which wraps
+`hybrid_search()` and reweights its results toward/away from the epistemic
+roles the PRD's own worked examples call for). Router bias runs strictly
+*after* policy filtering — it only reorders documents already eligible to
+be seen, never makes an ineligible one visible. Wired into `pce search`
+(prints the detected intent) and the MCP `search_context` tool (returns it
+per result as `detected_intent`).
+
 ## Security boundary
 
 Policy filtering happens *before* ranking. A highly relevant but unauthorized

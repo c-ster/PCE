@@ -41,9 +41,17 @@ Foundational build-out, tracking [PRD v0.1](docs/ARCHITECTURE.md). Current slice
   "why did we originally consider $3" are both answerable. Paired with an
   append-only `ContextEvent` log (`SOURCE_SUPERSEDED`, `DECISION_MADE`,
   `DECISION_REVERSED`, ...).
+- A **Context Router**: classifies query intent with a keyword heuristic
+  (no LLM call needed) and biases ranking toward the right kind of
+  evidence — a "rewrite this chapter" query surfaces fiction/creative
+  notes first, a "what did we commit to this customer" query surfaces
+  contractual records first, exactly as PRD section 15's own examples
+  describe. Runs strictly after policy filtering; it reorders, it never
+  re-includes something policy excluded. Shows up as "Detected intent:" in
+  `pce search` output.
 
-Not yet implemented: a real local embedding model, context router, context
-steward, memory governance (`search_memory` exists as an honest stub). See
+Not yet implemented: a real local embedding model, context steward, memory
+governance (`search_memory` exists as an honest stub). See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design and
 [docs/PRIVACY.md](docs/PRIVACY.md) / [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
 for the security posture.
@@ -79,6 +87,7 @@ pce source list
 pce index
 pce search "concise technical explanations preference" --include-unclassified
 pce classify <document-id> --sensitivity public --compartment PERSONAL
+pce classify <document-id> --epistemic-role fiction   # feeds the Context Router
 pce policy explain <document-id> --compartment PERSONAL
 
 pce assertion add --subject "project:nightingale" --predicate status --value proposed

@@ -199,6 +199,7 @@ def test_index_and_search_end_to_end(runner: CliRunner, capsule_env: dict, tmp_p
     )
     assert search_result.exit_code == 0, search_result.output
     assert "Nightingale Pricing" in search_result.output
+    assert "Detected intent:" in search_result.output
 
 
 def _get_document_id(runner: CliRunner, capsule_env: dict, source_id: str) -> str:
@@ -229,6 +230,24 @@ def test_classify_sets_sensitivity_and_compartment(runner: CliRunner, capsule_en
     assert classify_result.exit_code == 0, classify_result.output
     assert "sensitivity=public" in classify_result.output
     assert "LEGAL" in classify_result.output
+
+
+def test_classify_sets_epistemic_role(runner: CliRunner, capsule_env: dict, tmp_path: Path):
+    runner.invoke(cli, ["init"], env=capsule_env)
+
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.md").write_text("# A\n\nBody.\n")
+    add_result = runner.invoke(cli, ["source", "add", str(docs_dir)], env=capsule_env)
+    source_id = add_result.output.splitlines()[0].split()[2]
+    document_id = _get_document_id(runner, capsule_env, source_id)
+
+    result = runner.invoke(cli, ["classify", document_id, "--epistemic-role", "fiction"], env=capsule_env)
+    assert result.exit_code == 0, result.output
+    assert "epistemic_role=fiction" in result.output
+
+    inspect_result = runner.invoke(cli, ["source", "inspect", source_id], env=capsule_env)
+    assert "fiction" in inspect_result.output
 
 
 def test_classify_rejects_unregistered_compartment(runner: CliRunner, capsule_env: dict, tmp_path: Path):

@@ -39,7 +39,16 @@ def test_search_context_returns_provenance_fields(tmp_path: Path):
     assert results
     top = results[0]
     assert top["title"] == "Nightingale Pricing"
-    assert set(top.keys()) == {"document_id", "title", "source", "epistemic_role", "sensitivity", "score", "text"}
+    assert set(top.keys()) == {
+        "document_id",
+        "title",
+        "source",
+        "epistemic_role",
+        "sensitivity",
+        "score",
+        "text",
+        "detected_intent",
+    }
 
 
 def test_search_context_respects_access_scope(tmp_path: Path):

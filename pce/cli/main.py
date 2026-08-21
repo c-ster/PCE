@@ -30,7 +30,7 @@ from pce.context.assertions import AssertionRepository, AssertionStatus, Context
 from pce.context.chunks import ChunkRepository
 from pce.context.db import MIGRATIONS_DIR, connect
 from pce.context.events import ContextEvent, ContextEventType, EventRepository
-from pce.context.models import Sensitivity
+from pce.context.models import EpistemicRole, Sensitivity
 from pce.context.registry import SourceRegistry
 from pce.context.repository import SourceDocumentRepository
 from pce.mcp.server import build_server as build_mcp_server
@@ -38,7 +38,7 @@ from pce.policy.compartments import CompartmentRegistry
 from pce.policy.engine import AccessContext, evaluate
 from pce.providers.hashing_embeddings import HashingEmbeddingProvider
 from pce.retrieval.indexer import build_index
-from pce.retrieval.search import hybrid_search
+from pce.router.search import route_and_search
 
 # The only EmbeddingProvider this build ships. Query-time embedding must use
 # the same provider that built the index, or similarity scores are
@@ -214,14 +214,23 @@ def source_remove(source_id: str) -> None:
     "--sensitivity", type=click.Choice([s.value for s in Sensitivity]), help="Set the document's sensitivity level."
 )
 @click.option(
+    "--epistemic-role",
+    "epistemic_role",
+    type=click.Choice([r.value for r in EpistemicRole]),
+    help="Set what kind of evidence this document represents (section 9) — used by the Context Router to bias ranking.",
+)
+@click.option(
     "--compartment",
     "compartments",
     multiple=True,
     help="Set the document's compartments (replaces any existing ones; repeatable).",
 )
-def classify(document_id: str, sensitivity: str | None, compartments: tuple[str, ...]) -> None:
-    """Change a document's sensitivity and/or compartments (PRD section 31: a
-    state-changing action, done only on explicit request — never inferred)."""
+def classify(
+    document_id: str, sensitivity: str | None, epistemic_role: str | None, compartments: tuple[str, ...]
+) -> None:
+    """Change a document's sensitivity, epistemic role, and/or compartments
+    (PRD section 31: a state-changing action, done only on explicit
+    request — never inferred)."""
     _, conn = _open_capsule()
     doc_repo = SourceDocumentRepository(conn)
 
@@ -229,8 +238,10 @@ def classify(document_id: str, sensitivity: str | None, compartments: tuple[str,
     if not document:
         raise click.ClickException(f"No document with id {document_id}")
 
-    if not sensitivity and not compartments:
-        raise click.ClickException("Nothing to update — pass --sensitivity and/or --compartment.")
+    if not sensitivity and not epistemic_role and not compartments:
+        raise click.ClickException(
+            "Nothing to update — pass --sensitivity, --epistemic-role, and/or --compartment."
+        )
 
     if compartments:
         known = set(CompartmentRegistry(conn).list())
@@ -243,12 +254,17 @@ def classify(document_id: str, sensitivity: str | None, compartments: tuple[str,
     updates: dict = {}
     if sensitivity:
         updates["sensitivity"] = Sensitivity(sensitivity)
+    if epistemic_role:
+        updates["epistemic_role"] = EpistemicRole(epistemic_role)
     if compartments:
         updates["compartments"] = list(compartments)
 
     updated = document.model_copy(update=updates)
     doc_repo.upsert(updated)
-    click.echo(f"Updated {document_id}: sensitivity={updated.sensitivity}, compartments={updated.compartments}")
+    click.echo(
+        f"Updated {document_id}: sensitivity={updated.sensitivity}, "
+        f"epistemic_role={updated.epistemic_role}, compartments={updated.compartments}"
+    )
 
 
 @cli.group()
@@ -536,7 +552,8 @@ def search(query: str, limit: int, compartments: tuple[str, ...], include_unclas
     )
     click.secho(f"Scope: {scope_desc}", fg="cyan", err=True)
 
-    results = hybrid_search(conn, query, _EMBEDDING_PROVIDER, access_context, limit=limit)
+    intent, results = route_and_search(conn, query, _EMBEDDING_PROVIDER, access_context, limit=limit)
+    click.secho(f"Detected intent: {intent.value}", fg="cyan", err=True)
     if not results:
         click.echo("No matches.")
         return

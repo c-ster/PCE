@@ -14,7 +14,7 @@ from pce.context.chunks import ChunkRepository
 from pce.context.repository import SourceDocumentRepository
 from pce.policy.engine import AccessContext, evaluate
 from pce.providers.base import EmbeddingProvider
-from pce.retrieval.search import hybrid_search
+from pce.router.search import route_and_search
 
 
 def search_context(
@@ -24,7 +24,7 @@ def search_context(
     query: str,
     limit: int = 10,
 ) -> list[dict]:
-    results = hybrid_search(conn, query, embedding_provider, access_context, limit=limit)
+    intent, results = route_and_search(conn, query, embedding_provider, access_context, limit=limit)
     return [
         {
             "document_id": result.document.id,
@@ -34,6 +34,7 @@ def search_context(
             "sensitivity": result.document.sensitivity.value,
             "score": result.score,
             "text": result.text,
+            "detected_intent": intent.value,
         }
         for result in results
     ]
