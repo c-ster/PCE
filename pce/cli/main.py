@@ -1,10 +1,9 @@
 """`pce` command-line interface (PRD section 37).
 
-Commands backed by what's actually implemented (init, source, repo, sync,
-classify, index, search, compartment, policy explain, assertion, serve-mcp,
-doctor) do real work against the local capsule. Commands whose subsystem
-doesn't exist yet (memory, context) say so explicitly and exit non-zero,
-rather than pretending to work.
+Every command here does real work against the local capsule — no stubs
+left. `pce --help` lists the full surface: init, source, repo, sync,
+classify, assertion, index, search, memory, context, compartment, policy
+explain, serve-mcp, doctor.
 """
 
 from __future__ import annotations
@@ -35,6 +34,8 @@ from pce.context.registry import SourceRegistry
 from pce.context.repository import SourceDocumentRepository
 from pce.mcp.server import build_server as build_mcp_server
 from pce.memory.observations import ContextObservation, ObservationRepository, ObservationStatus
+from pce.steward.questions import QuestionRepository, QuestionStatus
+from pce.steward.scan import DEFAULT_STALENESS_DAYS, run_steward_scan
 from pce.policy.compartments import CompartmentRegistry
 from pce.policy.engine import AccessContext, evaluate
 from pce.providers.hashing_embeddings import HashingEmbeddingProvider
@@ -55,15 +56,6 @@ def _open_capsule():
         raise click.ClickException(str(exc)) from exc
     conn = connect(db_path(home))
     return home, conn
-
-
-def _not_yet_implemented(feature: str, doc_ref: str) -> None:
-    click.secho(
-        f"'{feature}' is not implemented yet in this build. See {doc_ref}.",
-        fg="yellow",
-        err=True,
-    )
-    sys.exit(1)
 
 
 @click.group()
@@ -654,22 +646,103 @@ def memory_reject(observation_id: str) -> None:
 
 @cli.group(name="context")
 def context_group() -> None:
-    """Context steward / inbox commands."""
+    """Context Steward / Inbox commands (PRD sections 17-22)."""
+
+
+def _print_inbox(questions: list) -> None:
+    if not questions:
+        click.echo("Context Inbox · 0 — nothing waiting on you.")
+        return
+
+    click.echo(f"Context Inbox · {len(questions)}")
+    for i, q in enumerate(questions, start=1):
+        click.echo(f"{i}. [{q.urgency}] {q.description}")
+        if q.suggested_answer:
+            click.echo(f"   Suggested: {q.suggested_answer}")
+        click.echo(f"   id: {q.id}")
 
 
 @context_group.command("inbox")
-def context_inbox() -> None:
-    _not_yet_implemented("pce context inbox", "docs/CONTEXT_STEWARD.md")
+@click.option("--include-deferred", is_flag=True, default=False, help="Also show deferred (not just open) questions.")
+def context_inbox(include_deferred: bool) -> None:
+    """List unresolved context questions. Does not scan for new ones — see `pce context review`."""
+    _, conn = _open_capsule()
+    statuses = (QuestionStatus.OPEN, QuestionStatus.DEFERRED) if include_deferred else (QuestionStatus.OPEN,)
+    _print_inbox(QuestionRepository(conn).list(statuses=statuses))
 
 
 @context_group.command("review")
-def context_review() -> None:
-    _not_yet_implemented("pce context review", "docs/CONTEXT_STEWARD.md")
+@click.option(
+    "--staleness-days", type=int, default=DEFAULT_STALENESS_DAYS, show_default=True,
+    help="How long a current assertion can go unconfirmed before it's flagged stale.",
+)
+def context_review(staleness_days: int) -> None:
+    """Scan for conflicts, staleness, and unreviewed observations, then show the inbox."""
+    _, conn = _open_capsule()
+    new_questions = run_steward_scan(conn, max_age_days=staleness_days)
+    if new_questions:
+        click.secho(f"Found {len(new_questions)} new item(s).", fg="cyan", err=True)
+    _print_inbox(QuestionRepository(conn).list(statuses=(QuestionStatus.OPEN,)))
 
 
 @context_group.command("stats")
 def context_stats() -> None:
-    _not_yet_implemented("pce context stats", "docs/CONTEXT_STEWARD.md")
+    """Show counts of context questions by status."""
+    _, conn = _open_capsule()
+    stats = QuestionRepository(conn).stats()
+    for status, count in stats.items():
+        click.echo(f"{status}: {count}")
+
+
+@context_group.command("answer")
+@click.argument("question_id")
+@click.option("--note", required=True, help="What you decided.")
+@click.option(
+    "--reconfirm",
+    is_flag=True,
+    default=False,
+    help="For a staleness question: also mark the related assertion reconfirmed today.",
+)
+def context_answer(question_id: str, note: str, reconfirm: bool) -> None:
+    """Resolve a question with a decision."""
+    _, conn = _open_capsule()
+    question_repo = QuestionRepository(conn)
+
+    question = question_repo.get(question_id)
+    if not question:
+        raise click.ClickException(f"No question with id {question_id}")
+
+    if reconfirm:
+        assertion_repo = AssertionRepository(conn)
+        for assertion_id in question.related_assertion_ids:
+            assertion_repo.confirm(assertion_id)
+
+    updated = question_repo.answer(question_id, note)
+    click.echo(f"Answered {updated.id}: {updated.resolution_note}")
+
+
+@context_group.command("defer")
+@click.argument("question_id")
+def context_defer(question_id: str) -> None:
+    """Postpone a question — still pending, just out of the default inbox view."""
+    _, conn = _open_capsule()
+    try:
+        updated = QuestionRepository(conn).defer(question_id)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Deferred {updated.id}")
+
+
+@context_group.command("dismiss")
+@click.argument("question_id")
+def context_dismiss(question_id: str) -> None:
+    """Dismiss a question — not worth resolving, no action taken."""
+    _, conn = _open_capsule()
+    try:
+        updated = QuestionRepository(conn).dismiss(question_id)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Dismissed {updated.id}")
 
 
 @cli.group()

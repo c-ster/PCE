@@ -76,10 +76,11 @@ exposes shell access, arbitrary SQL, unrestricted filesystem access, or
 generic network requests.
 
 **Implemented** in `pce/mcp/server.py` (`pce/mcp/tools.py` holds the plain,
-protocol-independent tool logic): `search_context` and `read_source` are
-real; `search_memory` returns an honest "not implemented yet" error rather
-than fabricating a result. The context-question/observation tools aren't
-exposed yet — they depend on the Context Steward, which doesn't exist.
+protocol-independent tool logic): every tool section 36 lists —
+`search_context`, `read_source`, `search_memory`, `accept_observation`,
+`reject_observation`, `get_context_questions`, `get_context_review`,
+`answer_context_question`, `defer_context_question`,
+`dismiss_context_question`.
 
 The access scope (`AccessContext`) is fixed once, when a human runs `pce
 serve-mcp [--compartment ...] [--include-unclassified]` — it is **not** a

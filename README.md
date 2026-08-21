@@ -14,27 +14,30 @@ another, or one UI with another, without rebuilding their personal context.
 
 ## Status
 
-Foundational build-out, tracking [PRD v0.1](docs/ARCHITECTURE.md). Current slice:
+The full [PRD v0.1](docs/ARCHITECTURE.md) architecture is now wired
+end to end — ingest → index → route → policy-filter → serve to a model,
+plus durable memory and a steward that watches for conflicts and
+staleness. What's real today:
 
 - `SourceDocument` canonical model with epistemic roles and sensitivity levels
 - SQLite persistence with an explicit migration runner
 - A local file adapter and a git adapter (Markdown/text), both enforcing
   approved source roots
-- A CLI (`pce init` / `source` / `repo` / `sync` / `classify` / `compartment` /
-  `index` / `search` / `policy explain` / `doctor`) wired to everything below;
-  commands for subsystems that don't exist yet say so explicitly instead of
-  pretending to work
+- A CLI (`pce --help` for the full list — every command does real work,
+  no stubs left) covering init, source/repo/sync, classify, assertion,
+  index/search, memory, context, compartment, policy explain, serve-mcp,
+  doctor
 - Hybrid retrieval: SQLite FTS5 (lexical) + a placeholder embedding provider
   (semantic), fused with reciprocal rank fusion
 - A deterministic policy engine enforced *before* ranking, not filtered out
   of results afterward: `UNKNOWN` sensitivity is excluded from search by
   default (fails closed), and a document scoped to a compartment the caller
   wasn't granted never surfaces, however relevant
-- A local MCP server (`pce serve-mcp`, stdio transport) exposing
-  `search_context` and `read_source` to any MCP-compatible client (Jan,
-  Claude Desktop/Code, Open WebUI, a bare `mcp` client). The access scope is
-  fixed by whoever starts the server, not something the connecting model can
-  widen via tool arguments.
+- A local MCP server (`pce serve-mcp`, stdio transport) exposing every tool
+  PRD section 36 lists to any MCP-compatible client (Jan, Claude Desktop/Code,
+  Open WebUI, a bare `mcp` client). The access scope is fixed by whoever
+  starts the server, not something the connecting model can widen via tool
+  arguments.
 - `ContextAssertion`s (`pce assertion`): durable claims that survive being
   superseded — superseding one never deletes the old row, it closes its
   `valid_until` and links `superseded_by`, so "what's the current price" and
@@ -53,11 +56,20 @@ Foundational build-out, tracking [PRD v0.1](docs/ARCHITECTURE.md). Current slice
   never becomes durable on its own — `propose` → `accept` ("Save", creates
   a `ContextAssertion`) / `edit` / `reject` ("Don't save", no durable trace
   at all). Exposed over MCP as `accept_observation`/`reject_observation`;
-  `search_memory` is now real (substring search over current assertions).
+  `search_memory` is real (substring search over current assertions).
+- **Context Steward + Inbox** (`pce context`): scans for what's
+  mechanically detectable without an LLM — two unresolved "current"
+  values for the same fact (a real conflict, not a guess) and assertions
+  nobody's reconfirmed in a while. Every question comes with a suggested
+  answer (a conflict's more-recent value; "still true?" for staleness) —
+  `answer`/`defer`/`dismiss` to work through them. Re-scanning never
+  duplicates an already-open question. Ambiguity, recurring themes, and
+  "missing context" detection would need real semantic reasoning this
+  build doesn't have, so they're not faked with a heuristic.
 
-Not yet implemented: a real local embedding model, Context Steward
-(pattern/conflict/staleness detection), Context Inbox. See
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design and
+Still placeholder rather than real: the embedding model (retrieval works,
+just not with true semantic understanding) and local LLM configuration.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design and
 [docs/PRIVACY.md](docs/PRIVACY.md) / [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
 for the security posture.
 
@@ -106,6 +118,11 @@ pce memory list --status proposed
 pce memory accept <observation-id>   # "Save" — creates the durable assertion
 # pce memory reject <observation-id> would discard it with no durable trace
 
+pce context review    # scans for conflicts/staleness, shows the inbox
+pce context inbox      # just lists what's already there, no scan
+pce context answer <question-id> --note "kept the newer value" --reconfirm
+pce context stats
+
 pce doctor
 ```
 
@@ -135,8 +152,10 @@ at it — for example, in Jan's or Claude Desktop's MCP config:
 
 Drop `--include-unclassified` once you've classified what you want visible
 (see `pce classify` above) — leaving it off is the fail-closed default.
-`search_context` and `read_source` are available; `search_memory` is a
-placeholder until durable memory exists.
+All ten tools from PRD section 36 are available: `search_context`,
+`read_source`, `search_memory`, `accept_observation`, `reject_observation`,
+`get_context_questions`, `get_context_review`, `answer_context_question`,
+`defer_context_question`, `dismiss_context_question`.
 
 Or use the library directly:
 

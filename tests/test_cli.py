@@ -146,21 +146,6 @@ def test_compartment_add_and_list(runner: CliRunner, capsule_env: dict):
     assert "PERSONAL" in result.output
 
 
-@pytest.mark.parametrize(
-    "args",
-    [
-        ["context", "inbox"],
-        ["context", "review"],
-        ["context", "stats"],
-    ],
-)
-def test_unimplemented_commands_fail_honestly(runner: CliRunner, capsule_env: dict, args: list):
-    runner.invoke(cli, ["init"], env=capsule_env)
-    result = runner.invoke(cli, args, env=capsule_env)
-    assert result.exit_code == 1
-    assert "not implemented yet" in result.output
-
-
 def test_search_without_index_errors(runner: CliRunner, capsule_env: dict):
     runner.invoke(cli, ["init"], env=capsule_env)
     result = runner.invoke(cli, ["search", "anything"], env=capsule_env)
@@ -499,3 +484,94 @@ def test_memory_accept_twice_errors(runner: CliRunner, capsule_env: dict):
 
     second = runner.invoke(cli, ["memory", "accept", observation_id], env=capsule_env)
     assert second.exit_code != 0
+
+
+def test_context_review_finds_conflict_and_inbox_shows_it(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    runner.invoke(
+        cli, ["assertion", "add", "--subject", "project:a", "--predicate", "price", "--value", "3000"], env=capsule_env
+    )
+    runner.invoke(
+        cli, ["assertion", "add", "--subject", "project:a", "--predicate", "price", "--value", "5000"], env=capsule_env
+    )
+
+    review_result = runner.invoke(cli, ["context", "review"], env=capsule_env)
+    assert review_result.exit_code == 0, review_result.output
+    assert "new item" in review_result.output
+    assert "Context Inbox · 1" in review_result.output
+
+    inbox_result = runner.invoke(cli, ["context", "inbox"], env=capsule_env)
+    assert "Context Inbox · 1" in inbox_result.output
+    assert "5000" in inbox_result.output  # suggested answer names the more recent value
+
+
+def test_context_inbox_empty_by_default(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    result = runner.invoke(cli, ["context", "inbox"], env=capsule_env)
+    assert "Context Inbox · 0" in result.output
+
+
+def test_context_answer_with_reconfirm(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    add_result = runner.invoke(
+        cli, ["assertion", "add", "--subject", "project:a", "--predicate", "status", "--value", "approved"], env=capsule_env
+    )
+    assertion_id = _first_line_id(add_result.output)
+
+    runner.invoke(cli, ["context", "review", "--staleness-days", "0"], env=capsule_env)
+    inbox_result = runner.invoke(cli, ["context", "inbox"], env=capsule_env)
+    question_id = inbox_result.output.splitlines()[-1].strip().split()[-1]
+
+    answer_result = runner.invoke(
+        cli, ["context", "answer", question_id, "--note", "still true", "--reconfirm"], env=capsule_env
+    )
+    assert answer_result.exit_code == 0, answer_result.output
+
+    show_result = runner.invoke(cli, ["assertion", "show", assertion_id], env=capsule_env)
+    assert "last_confirmed_at: None" not in show_result.output
+
+    empty_inbox = runner.invoke(cli, ["context", "inbox"], env=capsule_env)
+    assert "Context Inbox · 0" in empty_inbox.output
+
+
+def test_context_defer_and_dismiss(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    runner.invoke(
+        cli, ["assertion", "add", "--subject", "project:a", "--predicate", "price", "--value", "3000"], env=capsule_env
+    )
+    runner.invoke(
+        cli, ["assertion", "add", "--subject", "project:a", "--predicate", "price", "--value", "5000"], env=capsule_env
+    )
+    runner.invoke(cli, ["context", "review"], env=capsule_env)
+
+    inbox_result = runner.invoke(cli, ["context", "inbox"], env=capsule_env)
+    question_id = inbox_result.output.splitlines()[-1].strip().split()[-1]
+
+    defer_result = runner.invoke(cli, ["context", "defer", question_id], env=capsule_env)
+    assert defer_result.exit_code == 0
+
+    assert "Context Inbox · 0" in runner.invoke(cli, ["context", "inbox"], env=capsule_env).output
+    assert "Context Inbox · 1" in runner.invoke(
+        cli, ["context", "inbox", "--include-deferred"], env=capsule_env
+    ).output
+
+    dismiss_result = runner.invoke(cli, ["context", "dismiss", question_id], env=capsule_env)
+    assert dismiss_result.exit_code == 0
+    assert "Context Inbox · 0" in runner.invoke(
+        cli, ["context", "inbox", "--include-deferred"], env=capsule_env
+    ).output
+
+
+def test_context_stats_counts_by_status(runner: CliRunner, capsule_env: dict):
+    runner.invoke(cli, ["init"], env=capsule_env)
+    runner.invoke(
+        cli, ["assertion", "add", "--subject", "project:a", "--predicate", "price", "--value", "3000"], env=capsule_env
+    )
+    runner.invoke(
+        cli, ["assertion", "add", "--subject", "project:a", "--predicate", "price", "--value", "5000"], env=capsule_env
+    )
+    runner.invoke(cli, ["context", "review"], env=capsule_env)
+
+    result = runner.invoke(cli, ["context", "stats"], env=capsule_env)
+    assert result.exit_code == 0
+    assert "open: 1" in result.output

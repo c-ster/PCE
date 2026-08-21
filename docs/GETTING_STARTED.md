@@ -137,7 +137,25 @@ pce classify <document-id> --sensitivity public
 (You can find the document id from `pce source inspect <source-id>`, where
 `<source-id>` is the id printed when you ran `pce source add`.)
 
-## Step 7 (optional): Connect a local AI model
+## Step 7: Teach it something, and let it watch for problems
+
+PCE can remember things you tell it directly, and it'll flag it if two
+things you've recorded contradict each other:
+
+```bash
+pce memory propose --subject "me" --description "I prefer short, direct answers."
+pce memory list --status proposed
+pce memory accept <observation-id>   # nothing is remembered until you do this
+```
+
+Run this any time to check for anything that needs your attention —
+conflicting facts, or things you haven't confirmed in a while:
+
+```bash
+pce context review
+```
+
+## Step 8 (optional): Connect a local AI model
 
 If you run a local AI model through an app like [Jan](https://jan.ai),
 Claude Desktop, or Open WebUI, you can let it search your PCE context. Add
@@ -168,11 +186,15 @@ attention.
 
 ## What PCE can't do yet
 
-This is an early, actively-developed project. Right now it can store your
-documents, search them, and connect to a local AI model. It cannot yet:
-remember new facts on its own, notice when your notes contradict each
-other, or proactively ask you questions to keep itself up to date. Those
-are planned — see the main [README](../README.md) for current status.
+This is an early, actively-developed project. It can store your documents,
+search them, remember facts you've explicitly confirmed, notice when two
+confirmed facts conflict or have gone stale, and connect to a local AI
+model. What it can't do yet: notice a pattern in your writing and propose
+remembering it on its own (you write the observation yourself, today), or
+have a real conversation with you about an open question — it can only
+show you a suggested answer to pick from. Those need an actual local
+language model wired in, which isn't part of this build. See the main
+[README](../README.md) for current status.
 
 ## Getting help
 

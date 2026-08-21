@@ -17,6 +17,8 @@ from pce.memory.observations import ObservationRepository
 from pce.policy.engine import AccessContext, evaluate
 from pce.providers.base import EmbeddingProvider
 from pce.router.search import route_and_search
+from pce.steward.questions import ContextQuestion, QuestionRepository, QuestionStatus
+from pce.steward.scan import DEFAULT_STALENESS_DAYS, run_steward_scan
 
 
 def search_context(
@@ -112,3 +114,69 @@ def reject_observation(conn: sqlite3.Connection, observation_id: str) -> dict:
     except ValueError as exc:
         return {"error": str(exc)}
     return {"observation_id": observation.id, "status": observation.status.value}
+
+
+def _question_to_dict(question: ContextQuestion) -> dict:
+    return {
+        "id": question.id,
+        "question_type": question.question_type.value,
+        "urgency": question.urgency.value,
+        "subject": question.subject,
+        "description": question.description,
+        "suggested_answer": question.suggested_answer,
+        "status": question.status.value,
+    }
+
+
+def get_context_questions(conn: sqlite3.Connection, include_deferred: bool = False) -> list[dict]:
+    """Lists unresolved context questions. Read-only — does not scan for
+    new ones; see get_context_review for that."""
+    statuses = (QuestionStatus.OPEN, QuestionStatus.DEFERRED) if include_deferred else (QuestionStatus.OPEN,)
+    return [_question_to_dict(q) for q in QuestionRepository(conn).list(statuses=statuses)]
+
+
+def get_context_review(conn: sqlite3.Connection, staleness_days: int = DEFAULT_STALENESS_DAYS) -> dict:
+    """Scans for conflicts, staleness, and unreviewed observations, then
+    returns the resulting open inbox."""
+    new_questions = run_steward_scan(conn, max_age_days=staleness_days)
+    open_questions = QuestionRepository(conn).list(statuses=(QuestionStatus.OPEN,))
+    return {
+        "new_items_found": len(new_questions),
+        "open_questions": [_question_to_dict(q) for q in open_questions],
+    }
+
+
+def answer_context_question(
+    conn: sqlite3.Connection, question_id: str, note: str, reconfirm: bool = False
+) -> dict:
+    """Resolves a question with a decision. reconfirm=True also marks any
+    related assertions reconfirmed today (for staleness questions)."""
+    repo = QuestionRepository(conn)
+    question = repo.get(question_id)
+    if question is None:
+        return {"error": f"no question with id {question_id}"}
+
+    if reconfirm:
+        assertion_repo = AssertionRepository(conn)
+        for assertion_id in question.related_assertion_ids:
+            assertion_repo.confirm(assertion_id)
+
+    return _question_to_dict(repo.answer(question_id, note))
+
+
+def defer_context_question(conn: sqlite3.Connection, question_id: str) -> dict:
+    """Postpones a question — still pending, just deprioritized."""
+    try:
+        updated = QuestionRepository(conn).defer(question_id)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return _question_to_dict(updated)
+
+
+def dismiss_context_question(conn: sqlite3.Connection, question_id: str) -> dict:
+    """Dismisses a question — not worth resolving, no action taken."""
+    try:
+        updated = QuestionRepository(conn).dismiss(question_id)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return _question_to_dict(updated)

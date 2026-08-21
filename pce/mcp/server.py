@@ -2,10 +2,8 @@
 
 Exposes tools over a fixed AccessContext set at startup by whoever ran
 `pce serve-mcp` — the connecting model cannot expand its own access via
-tool arguments (section 26: the LLM is not the security boundary).
-search_context, read_source, search_memory, accept_observation, and
-reject_observation are implemented; the context-question tools depend on
-the Context Steward, which doesn't exist yet.
+tool arguments (section 26: the LLM is not the security boundary). Every
+tool in section 36's list is implemented.
 
 Once running, this process's stdout carries the MCP stdio protocol itself —
 any diagnostic printing must go to stderr (see pce/cli/main.py's serve-mcp
@@ -71,5 +69,33 @@ def build_server(
     def reject_observation(observation_id: str) -> dict:
         """Reject a proposed observation. No durable memory is created."""
         return tools.reject_observation(conn, observation_id)
+
+    @server.tool()
+    def get_context_questions(include_deferred: bool = False) -> list[dict]:
+        """List unresolved context questions (the inbox). Read-only —
+        does not scan for new ones; see get_context_review."""
+        return tools.get_context_questions(conn, include_deferred=include_deferred)
+
+    @server.tool()
+    def get_context_review(staleness_days: int = tools.DEFAULT_STALENESS_DAYS) -> dict:
+        """Scans for conflicts, staleness, and unreviewed observations,
+        then returns the resulting open inbox."""
+        return tools.get_context_review(conn, staleness_days=staleness_days)
+
+    @server.tool()
+    def answer_context_question(question_id: str, note: str, reconfirm: bool = False) -> dict:
+        """Resolve a context question with a decision. reconfirm=True also
+        marks any related assertions reconfirmed today."""
+        return tools.answer_context_question(conn, question_id, note, reconfirm=reconfirm)
+
+    @server.tool()
+    def defer_context_question(question_id: str) -> dict:
+        """Postpone a context question — still pending, just deprioritized."""
+        return tools.defer_context_question(conn, question_id)
+
+    @server.tool()
+    def dismiss_context_question(question_id: str) -> dict:
+        """Dismiss a context question — not worth resolving."""
+        return tools.dismiss_context_question(conn, question_id)
 
     return server

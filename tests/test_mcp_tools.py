@@ -130,3 +130,64 @@ def test_reject_observation_creates_no_assertion(tmp_path: Path):
     result = tools.reject_observation(conn, observation.id)
     assert result["status"] == "rejected"
     assert AssertionRepository(conn).list_current() == []
+
+
+def test_get_context_review_finds_conflict_and_lists_it(tmp_path: Path):
+    conn, _ = _build_indexed_corpus(tmp_path)
+    AssertionRepository(conn).create(
+        ContextAssertion(subject="project:a", predicate="price", value="3000")
+    )
+    AssertionRepository(conn).create(
+        ContextAssertion(subject="project:a", predicate="price", value="5000")
+    )
+
+    review = tools.get_context_review(conn)
+    assert review["new_items_found"] == 1
+    assert len(review["open_questions"]) == 1
+    assert review["open_questions"][0]["question_type"] == "assertion_conflict"
+
+
+def test_get_context_questions_is_read_only(tmp_path: Path):
+    conn, _ = _build_indexed_corpus(tmp_path)
+    AssertionRepository(conn).create(ContextAssertion(subject="project:a", predicate="price", value="3000"))
+    AssertionRepository(conn).create(ContextAssertion(subject="project:a", predicate="price", value="5000"))
+
+    assert tools.get_context_questions(conn) == []  # no scan has run yet
+    tools.get_context_review(conn)
+    assert len(tools.get_context_questions(conn)) == 1
+
+
+def test_answer_context_question_with_reconfirm(tmp_path: Path):
+    conn, _ = _build_indexed_corpus(tmp_path)
+    assertion = AssertionRepository(conn).create(
+        ContextAssertion(subject="project:a", predicate="status", value="approved")
+    )
+    review = tools.get_context_review(conn, staleness_days=0)
+    [question] = review["open_questions"]
+
+    result = tools.answer_context_question(conn, question["id"], "still true", reconfirm=True)
+    assert result["status"] == "answered"
+
+    reconfirmed = AssertionRepository(conn).get(assertion.id)
+    assert reconfirmed.last_confirmed_at is not None
+
+
+def test_defer_and_dismiss_context_question(tmp_path: Path):
+    conn, _ = _build_indexed_corpus(tmp_path)
+    AssertionRepository(conn).create(ContextAssertion(subject="project:a", predicate="price", value="3000"))
+    AssertionRepository(conn).create(ContextAssertion(subject="project:a", predicate="price", value="5000"))
+    review = tools.get_context_review(conn)
+    [question] = review["open_questions"]
+
+    deferred = tools.defer_context_question(conn, question["id"])
+    assert deferred["status"] == "deferred"
+    assert tools.get_context_questions(conn) == []
+
+    dismissed = tools.dismiss_context_question(conn, question["id"])
+    assert dismissed["status"] == "dismissed"
+
+
+def test_answer_context_question_unknown_id_returns_error(tmp_path: Path):
+    conn, _ = _build_indexed_corpus(tmp_path)
+    result = tools.answer_context_question(conn, "does-not-exist", "note")
+    assert "error" in result
